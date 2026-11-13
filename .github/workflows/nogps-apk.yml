@@ -1,0 +1,80 @@
+# Debug APK NonGPS Maps for manual install on the car head unit (Unisoc, armeabi-v7a)
+# and on the Fold4 / S23 Ultra (arm64-v8a). serg/tasks#2989, spec.nogps-car.
+# A separate file so the fork can keep pulling upstream without conflicts.
+name: NoGPS APK
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+    paths-ignore:
+      - .agents/**
+      - .claude/**
+      - .gemini/**
+      - '**/*.md'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nogps-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: boat-large
+    timeout-minutes: 150
+    env:
+      NDK_VERSION: 29.0.14206865   # android/gradle.properties: propNdkVersion
+    steps:
+      - name: Install build tools
+        run: |
+          sudo apt-get update -y -qq
+          sudo apt-get install -y -qq ninja-build cmake git
+
+      - name: Checkout sources
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 200 # versioning script needs today's commits
+
+      - name: Parallel submodules checkout
+        run: git submodule update --depth 1 --init --recursive --jobs=$(($(nproc) * 20))
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+
+      - name: Install NDK
+        run: sdkmanager --install "ndk;${NDK_VERSION}"
+
+      - name: Configure ccache
+        uses: hendrikmuhs/ccache-action@f09c25b45002a07be2955cbe52e8cee55643f89d # v1.2.24
+        with:
+          key: nogps-apk-webdebug
+
+      - name: Build WebDebug (arm64-v8a + armeabi-v7a)
+        working-directory: android
+        env:
+          CMAKE_C_COMPILER_LAUNCHER: ccache
+          CMAKE_CXX_COMPILER_LAUNCHER: ccache
+        # -Parm64 -Parm32: android/sdk/build.gradle adds both ABIs to abiFilters -> one APK with both.
+        run: ./gradlew -Parm64 -Parm32 assembleWebDebug
+
+      - name: Short sha
+        id: sha
+        run: echo "short=${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: nogps-maps-${{ steps.sha.outputs.short }}
+          path: android/app/build/outputs/apk/web/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
