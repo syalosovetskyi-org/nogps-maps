@@ -22,7 +22,8 @@ concurrency:
 
 jobs:
   apk:
-    runs-on: boat-large
+    # Public fork: GitHub-hosted runners are free here; boat runners do not pick up public repos.
+    runs-on: ubuntu-latest
     timeout-minutes: 150
     env:
       NDK_VERSION: 29.0.14206865   # android/gradle.properties: propNdkVersion
