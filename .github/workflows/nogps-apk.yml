@@ -60,13 +60,14 @@ jobs:
         with:
           key: nogps-apk-webdebug
 
-      - name: Build WebDebug (arm64-v8a + armeabi-v7a)
+      - name: Build WebDebug and CarDebug (arm64-v8a + armeabi-v7a)
         working-directory: android
         env:
           CMAKE_C_COMPILER_LAUNCHER: ccache
           CMAKE_CXX_COMPILER_LAUNCHER: ccache
         # -Parm64 -Parm32: android/sdk/build.gradle adds both ABIs to abiFilters -> one APK with both.
-        run: ./gradlew -Parm64 -Parm32 assembleWebDebug
+        # The car flavor is the head unit build: the native libraries of the sdk module are built once for both.
+        run: ./gradlew -Parm64 -Parm32 assembleWebDebug assembleCarDebug
 
       - name: Short sha
         id: sha
@@ -77,5 +78,13 @@ jobs:
         with:
           name: nogps-maps-${{ steps.sha.outputs.short }}
           path: android/app/build/outputs/apk/web/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload head unit APK
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: nogps-maps-car-${{ steps.sha.outputs.short }}
+          path: android/app/build/outputs/apk/car/debug/*.apk
           if-no-files-found: error
           retention-days: 14
