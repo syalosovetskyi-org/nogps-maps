@@ -298,7 +298,7 @@ def allowedPermissions = [
     "name='android.permission.FOREGROUND_SERVICE_LOCATION'",
     "name='android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK'",
     "name='android.permission.FOREGROUND_SERVICE_DATA_SYNC'",
-    // the car followed by the sensor box in the background
+    // the car followed by the ELM327 adapter in the background
     "name='android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE'",
     // notifications
     "name='android.permission.POST_NOTIFICATIONS'",
@@ -306,11 +306,9 @@ def allowedPermissions = [
     "name='android.permission.WAKE_LOCK'",
     // the voice notes of the flags of test drives
     "name='android.permission.RECORD_AUDIO'",
-    // ELM327 OBD-II adapter and the ESP32 sensor box
+    // ELM327 OBD-II adapter
     "name='android.permission.BLUETOOTH' maxSdkVersion='30'",
     "name='android.permission.BLUETOOTH_CONNECT'",
-    "name='android.permission.BLUETOOTH_ADMIN' maxSdkVersion='30'",
-    "name='android.permission.BLUETOOTH_SCAN' usesPermissionFlags='neverForLocation'",
     // Android Auto
     "name='androidx.car.app.NAVIGATION_TEMPLATES'",
     "name='androidx.car.app.ACCESS_SURFACE'",

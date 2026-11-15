@@ -21,7 +21,7 @@ import androidx.lifecycle.ProcessLifecycleOwner;
 import androidx.preference.PreferenceManager;
 import app.organicmaps.background.OsmUploadWork;
 import app.organicmaps.downloader.DownloaderNotifier;
-import app.organicmaps.location.NoGpsBoxService;
+import app.organicmaps.location.NoGpsBackgroundService;
 import app.organicmaps.location.TrackRecordingService;
 import app.organicmaps.nogps.NoGpsFlags;
 import app.organicmaps.routing.NavigationService;
@@ -146,7 +146,7 @@ public class MwmApplication extends Application implements Application.ActivityL
         onNavigationOrRecordingStopped();
     });
     TrackRecordingService.createNotificationChannel(this);
-    NoGpsBoxService.createNotificationChannel(this);
+    NoGpsBackgroundService.createNotificationChannel(this);
     NoGpsFlags.deleteExpired(this);
     // Reset the widget in case the process was killed while recording.
     TrackRecordingWidget.update(this);
@@ -228,7 +228,7 @@ public class MwmApplication extends Application implements Application.ActivityL
   {
     Logger.d(TAG);
 
-    NoGpsBoxService.stop(this);
+    NoGpsBackgroundService.stop(this);
     getLocationHelper().resumeLocationInForeground();
   }
 
@@ -263,23 +263,23 @@ public class MwmApplication extends Application implements Application.ActivityL
   }
 
   /**
-   * The car is not followed by the box in the background any more: it is parked, or the system doesn't let it.
+   * The car is not followed by the adapter in the background any more: it is parked, or the system doesn't let it.
    */
   public void onCarNotFollowedInBackground()
   {
     if (!ProcessLifecycleOwner.get().getLifecycle().getCurrentState().isAtLeast(Lifecycle.State.STARTED))
-      stopLocationInBackgroundIfUnused(false /* followCarByBox */);
+      stopLocationInBackgroundIfUnused(false /* followCarByAdapter */);
   }
 
   private void stopLocationInBackgroundIfUnused()
   {
-    stopLocationInBackgroundIfUnused(true /* followCarByBox */);
+    stopLocationInBackgroundIfUnused(true /* followCarByAdapter */);
   }
 
   /**
    * Stops location updates while the app is in the background unless a feature still needs them there.
    */
-  private void stopLocationInBackgroundIfUnused(boolean followCarByBox)
+  private void stopLocationInBackgroundIfUnused(boolean followCarByAdapter)
   {
     if (!mDisplayManager.isDeviceDisplayUsed())
       Logger.i(LOCATION_TAG, "Android Auto is active, keeping location in the background");
@@ -289,9 +289,9 @@ public class MwmApplication extends Application implements Application.ActivityL
       Logger.i(LOCATION_TAG, "PENDING_POSITION mode, keeping location in the background");
     else if (TrackRecorder.nativeIsTrackRecordingEnabled())
       Logger.i(LOCATION_TAG, "Track Recordr is active, keeping location in the background");
-    else if (followCarByBox && NoGpsBoxService.startIfCarData(this))
+    else if (followCarByAdapter && NoGpsBackgroundService.startIfCarData(this))
     {
-      Logger.i(LOCATION_TAG, "The box tells the car data, following the car by it in the background");
+      Logger.i(LOCATION_TAG, "The adapter tells the car data, following the car by it in the background");
       getLocationHelper().pauseSystemLocation();
     }
     else

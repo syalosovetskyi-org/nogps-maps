@@ -42,7 +42,6 @@ import androidx.lifecycle.ViewModelProvider;
 import app.organicmaps.MwmActivity;
 import app.organicmaps.MwmApplication;
 import app.organicmaps.R;
-import app.organicmaps.nogps.BoxBottomSheet;
 import app.organicmaps.nogps.NoGpsFlagRecorder;
 import app.organicmaps.nogps.NoGpsFlags;
 import app.organicmaps.nogps.SensorsBottomSheet;
@@ -229,7 +228,7 @@ public class MapButtonsController extends Fragment
     mPositionStatus.setOnClickListener((v) -> mMapButtonClickListener.onMapButtonClick(MapButtons.positionStatus));
     final View statusBar = mFrame.findViewById(R.id.status_nav);
     if (statusBar != null)
-      mStatusBar = new StatusBar(statusBar, () -> showSheet(new BoxBottomSheet(), BoxBottomSheet.TAG));
+      mStatusBar = new StatusBar(statusBar, () -> showSheet(new SensorsBottomSheet(), SensorsBottomSheet.TAG));
     final View speedView = mFrame.findViewById(R.id.speed_view);
     if (speedView != null)
       mSpeedView = new SpeedView(speedView);
@@ -899,7 +898,7 @@ public class MapButtonsController extends Fragment
       dockPanels(insets);
       return windowInsets;
     });
-    // The sheets change what the bar shows: GPS used or not, the box forgotten.
+    // The sheets change what the bar shows: GPS used or not, the inertial navigation turned off.
     requireActivity().getSupportFragmentManager().setFragmentResultListener(
         SensorsBottomSheet.RESULT_CLOSED, getViewLifecycleOwner(), (key, result) -> updatePositionStatus());
   }

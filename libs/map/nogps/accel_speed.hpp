@@ -76,7 +76,7 @@ public:
   /// Forgets everything: another sensor.
   void Reset();
 
-  /// What is learned about how the sensor is fixed in the car. A sensor box stays in its place: the application
+  /// What is learned about how the sensor is fixed in the car. A phone holder stays in its place: the application
   /// started again goes on with it, and knows which way the car starts from the first minute of a trip.
   std::string Serialize() const;
   /// \returns false if the string is wrong, nothing is changed then.

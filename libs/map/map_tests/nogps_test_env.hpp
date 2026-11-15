@@ -4,7 +4,6 @@
 
 #include "map/nogps/clock.hpp"
 #include "map/nogps/delegate.hpp"
-#include "map/nogps/esp32_protocol.hpp"
 #include "map/nogps/map_api.hpp"
 #include "map/nogps/scheduler.hpp"
 #include "map/nogps/storage.hpp"
@@ -98,10 +97,6 @@ public:
   void Elm327Connect(std::string const & address) override { m_elm327Connects.push_back(address); }
   void Elm327Write(std::string const & data) override { m_elm327Writes.push_back(data); }
   void Elm327Close() override { ++m_elm327Closes; }
-  void Esp32BleOpen() override { m_esp32BleOpen = true; }
-  void Esp32BleSend(std::string const & line) override { m_esp32BleSent.push_back(line); }
-  void Esp32BleSendFirmware(std::string const & piece) override { m_firmwarePieces.push_back(piece); }
-  void Esp32BleClose() override { m_esp32BleOpen = false; }
   void OnPosition(nogps::Fix const & fix) override { m_positions.push_back(fix); }
   void OnEvent(nogps::Event event) override { m_events.push_back(event); }
 
@@ -115,9 +110,6 @@ public:
   std::vector<std::string> m_elm327Connects;
   std::vector<std::string> m_elm327Writes;
   int m_elm327Closes = 0;
-  bool m_esp32BleOpen = false;
-  std::vector<std::string> m_esp32BleSent;
-  std::vector<std::string> m_firmwarePieces;
   std::vector<nogps::Fix> m_positions;
   std::vector<nogps::Event> m_events;
 };
@@ -160,24 +152,6 @@ public:
   // Other roads instead of the grid.
   nogps::Roads * m_roads = nullptr;
 };
-
-/// A data line of the ESP32 box with the totals since its start.
-inline std::string BoxDataLine(int64_t seq, int64_t timeMs, int64_t yawMdeg, int speedKmh, int flags)
-{
-  char body[160];
-  std::snprintf(body, sizeof(body), "NGD,1,%lld,%lld,%lld,0,0,%d,0,%X", static_cast<long long>(seq),
-                static_cast<long long>(timeMs), static_cast<long long>(yawMdeg), speedKmh, flags);
-  char crc[8];
-  std::snprintf(crc, sizeof(crc), "%04X", nogps::esp32::Crc16(body));
-  return std::string("$") + body + "*" + crc + "\r\n";
-}
-
-inline std::string BoxLine(std::string const & body)
-{
-  char crc[8];
-  std::snprintf(crc, sizeof(crc), "%04X", nogps::esp32::Crc16(body));
-  return "$" + body + "*" + crc + "\r\n";
-}
 
 /// A GPS position at meters east and north of the grid origin.
 inline nogps::Fix GpsAt(TestClock const & clock, double eastM, double northM, std::optional<double> bearingDeg = {},

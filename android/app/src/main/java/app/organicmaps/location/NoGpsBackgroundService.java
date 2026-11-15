@@ -24,18 +24,20 @@ import app.organicmaps.sdk.location.NoGps;
 import app.organicmaps.sdk.util.log.Logger;
 
 /**
- * Keeps the navigation without GPS and the link to the box running while the app is in the background and the box
- * tells the car data: without it Android stops the app, and the car drives on uncounted. On October 16 a car switched
- * away from the app for 6 s at 9 km/h was shown 20 m behind. A car parked, the box tells no car data: the service
- * stops, and the navigation with it, as without the service.
+ * Keeps the navigation without GPS and the link to the ELM327 adapter running while the app is in the background and
+ * the adapter tells the car data: without it Android stops the app, and the car drives on uncounted. On October 16 a
+ * car switched away from the app for 6 s at 9 km/h was shown 20 m behind. A car parked, the adapter tells no car data:
+ * the service stops, and the navigation with it, as without the service.
  */
-public class NoGpsBoxService extends Service
+public class NoGpsBackgroundService extends Service
 {
-  private static final String TAG = NoGpsBoxService.class.getSimpleName();
-  public static final String CHANNEL_ID = "NOGPS BOX";
+  private static final String TAG = NoGpsBackgroundService.class.getSimpleName();
+  public static final String CHANNEL_ID = "NOGPS BACKGROUND";
+  // The channel of the earlier builds, deleted not to stay in the system settings of the app.
+  private static final String OLD_CHANNEL_ID = "NOGPS BOX";
   private static final int NOTIFICATION_ID = 54322;
   private static final long CHECK_INTERVAL_MS = 10_000;
-  // The box loses the car for a few seconds now and then while it drives, e.g. when the adapter reconnects.
+  // The adapter loses the car for a few seconds now and then while it drives, e.g. when it reconnects.
   private static final long NO_CAR_DATA_STOP_MS = 60_000;
 
   private final Handler mHandler = new Handler(Looper.getMainLooper());
@@ -43,9 +45,9 @@ public class NoGpsBoxService extends Service
   private final Runnable mCheck = this::checkCarData;
 
   /**
-   * Starts the service if the box tells the car data now.
+   * Starts the service if the adapter tells the car data now.
    *
-   * @return false if the car is not followed by the box, or the system doesn't let the service start.
+   * @return false if the car is not followed by the adapter, or the system doesn't let the service start.
    */
   public static boolean startIfCarData(@NonNull Context context)
   {
@@ -53,7 +55,7 @@ public class NoGpsBoxService extends Service
       return false;
     try
     {
-      ContextCompat.startForegroundService(context, new Intent(context, NoGpsBoxService.class));
+      ContextCompat.startForegroundService(context, new Intent(context, NoGpsBackgroundService.class));
       return true;
     }
     catch (IllegalStateException e)
@@ -66,7 +68,7 @@ public class NoGpsBoxService extends Service
 
   public static void stop(@NonNull Context context)
   {
-    context.stopService(new Intent(context, NoGpsBoxService.class));
+    context.stopService(new Intent(context, NoGpsBackgroundService.class));
   }
 
   public static void createNotificationChannel(@NonNull Context context)
@@ -77,6 +79,7 @@ public class NoGpsBoxService extends Service
             .setLightsEnabled(false)
             .setVibrationEnabled(false)
             .build();
+    NotificationManagerCompat.from(context).deleteNotificationChannel(OLD_CHANNEL_ID);
     NotificationManagerCompat.from(context).createNotificationChannel(channel);
   }
 
@@ -125,7 +128,7 @@ public class NoGpsBoxService extends Service
       MwmApplication.from(this).onCarNotFollowedInBackground();
       return START_NOT_STICKY;
     }
-    Logger.i(TAG, "The car is followed by the box in the background");
+    Logger.i(TAG, "The car is followed by the adapter in the background");
     mCarDataMs = SystemClock.elapsedRealtime();
     mHandler.removeCallbacks(mCheck);
     mHandler.postDelayed(mCheck, CHECK_INTERVAL_MS);

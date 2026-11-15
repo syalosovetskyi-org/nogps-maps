@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The inertial navigation: a speedometer, the car is followed by its speed and the gyroscope of the phone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+  android:width="24dp"
+  android:height="24dp"
+  android:viewportWidth="24"
+  android:viewportHeight="24">
+  <path android:strokeColor="@android:color/white" android:strokeWidth="2" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M4,17a8,8 0,1 1,16 0M12,17l4,-5M6.5,11.5l1,0.8M17.5,11.5l-1,0.8M12,7v1.5" />
+</vector>

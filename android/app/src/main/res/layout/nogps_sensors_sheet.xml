@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The sheet is taller than a phone screen with the car data of the sensor box, so it scrolls. -->
+<!-- The inertial navigation: its switch, the ELM327 adapter, the speed and the gyroscope, then GPS. Taller than a phone
+     screen with the speed table open, so it scrolls. See SensorsBottomSheet. -->
 <androidx.core.widget.NestedScrollView
   xmlns:android="http://schemas.android.com/apk/res/android"
   android:layout_width="match_parent"
@@ -13,74 +14,25 @@
   android:paddingTop="16dp"
   android:paddingBottom="24dp">
 
-  <TextView
+  <!-- Shown at once, whatever the state: the user turns it on here. -->
+  <androidx.appcompat.widget.SwitchCompat
+    android:id="@+id/nogps_inertial"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
+    android:minHeight="56dp"
     android:text="@string/nogps_sensors_title"
     android:textAppearance="?android:textAppearanceLarge"
     android:textStyle="bold" />
 
-  <LinearLayout
-    android:id="@+id/nogps_no_box"
+  <TextView
+    android:id="@+id/nogps_no_gyro"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:orientation="vertical"
-    android:visibility="gone">
-    <TextView
-      android:layout_width="match_parent"
-      android:layout_height="wrap_content"
-      android:layout_marginTop="12dp"
-      android:text="@string/nogps_box_buy_title"
-      android:textSize="16sp"
-      android:textStyle="bold" />
-    <TextView
-      android:layout_width="match_parent"
-      android:layout_height="wrap_content"
-      android:layout_marginTop="4dp"
-      android:text="@string/nogps_box_buy_text"
-      android:textColor="?android:textColorSecondary"
-      android:textSize="14sp" />
-    <Button
-      android:id="@+id/nogps_buy"
-      style="@style/MwmWidget.Button.Accent"
-      android:layout_width="match_parent"
-      android:layout_height="wrap_content"
-      android:layout_marginTop="8dp"
-      android:text="@string/nogps_box_buy" />
-    <Button
-      android:id="@+id/nogps_connect"
-      style="?borderlessButtonStyle"
-      android:layout_width="match_parent"
-      android:layout_height="wrap_content"
-      android:text="@string/nogps_box_connect" />
-  </LinearLayout>
-
-  <LinearLayout
-    android:id="@+id/nogps_paired"
-    android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:orientation="vertical">
-
-  <!-- The box is the only source: the choice of the ELM327 adapter of the phone is hidden. -->
-  <RadioGroup
-    android:id="@+id/nogps_source"
-    android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:orientation="vertical"
-    android:visibility="gone">
-    <RadioButton
-      android:id="@+id/nogps_source_phone"
-      android:layout_width="match_parent"
-      android:layout_height="48dp"
-      android:text="@string/nogps_source_phone"
-      android:textSize="16sp" />
-    <RadioButton
-      android:id="@+id/nogps_source_esp32_bt"
-      android:layout_width="match_parent"
-      android:layout_height="48dp"
-      android:text="@string/nogps_source_esp32_bt"
-      android:textSize="16sp" />
-  </RadioGroup>
+    android:paddingBottom="8dp"
+    android:text="@string/nogps_no_gyroscope"
+    android:textColor="@color/base_red"
+    android:textSize="16sp"
+    android:visibility="gone" />
 
   <TextView
     android:id="@+id/nogps_hint"
@@ -91,6 +43,7 @@
     android:textColor="?android:textColorSecondary"
     android:textSize="14sp" />
 
+  <!-- Shown at once too: choosing the adapter turns the inertial navigation on. -->
   <LinearLayout
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
@@ -111,26 +64,13 @@
       android:text="@string/nogps_sensors_choose" />
   </LinearLayout>
 
+  <!-- While the inertial navigation is on. -->
   <LinearLayout
-    android:id="@+id/nogps_firmware_row"
+    android:id="@+id/nogps_details"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:minHeight="52dp"
-    android:gravity="center_vertical"
-    android:orientation="horizontal"
+    android:orientation="vertical"
     android:visibility="gone">
-    <TextView
-      android:id="@+id/nogps_firmware"
-      android:layout_width="0dp"
-      android:layout_height="wrap_content"
-      android:layout_weight="1"
-      android:textSize="16sp" />
-    <Button
-      android:id="@+id/nogps_firmware_button"
-      style="?borderlessButtonStyle"
-      android:layout_width="wrap_content"
-      android:layout_height="wrap_content" />
-  </LinearLayout>
 
   <TextView
     android:id="@+id/nogps_speed"
@@ -138,25 +78,6 @@
     android:layout_height="52dp"
     android:gravity="center_vertical"
     android:textSize="16sp" />
-
-  <TextView
-    android:id="@+id/nogps_car"
-    android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:lineSpacingExtra="6dp"
-    android:paddingBottom="8dp"
-    android:textSize="16sp"
-    android:visibility="gone" />
-
-  <TextView
-    android:id="@+id/nogps_voltage_mismatch"
-    android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:paddingBottom="8dp"
-    android:text="@string/nogps_voltage_mismatch"
-    android:textColor="@color/base_red"
-    android:textSize="16sp"
-    android:visibility="gone" />
 
   <LinearLayout
     android:layout_width="match_parent"
@@ -210,26 +131,6 @@
     android:textSize="16sp"
     android:visibility="gone" />
 
-  <TextView
-    android:id="@+id/nogps_box_calibration_title"
-    android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:layout_marginTop="12dp"
-    android:text="@string/nogps_box_calibration"
-    android:textSize="16sp"
-    android:textStyle="bold"
-    android:visibility="gone" />
-
-  <TextView
-    android:id="@+id/nogps_box_calibration_hint"
-    android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:layout_marginTop="4dp"
-    android:text="@string/nogps_box_calibration_hint"
-    android:textColor="?android:textColorSecondary"
-    android:textSize="14sp"
-    android:visibility="gone" />
-
   <LinearLayout
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
@@ -258,15 +159,79 @@
     android:layout_marginTop="8dp"
     android:textSize="17sp"
     android:textStyle="bold" />
+  </LinearLayout>
 
-  <Button
-    android:id="@+id/nogps_forget"
-    style="?borderlessButtonStyle"
+  <!-- GPS: what it is worth, if the car follows it, and the share of the position with other apps. -->
+  <TextView
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:layout_marginTop="8dp"
-    android:text="@string/nogps_box_forget"
-    android:textColor="@color/base_red" />
-  </LinearLayout>
+    android:layout_marginTop="20dp"
+    android:text="@string/nogps_status_gps"
+    android:textAppearance="?android:textAppearanceLarge"
+    android:textStyle="bold" />
+
+  <app.organicmaps.nogps.GpsSheetView
+    android:id="@+id/nogps_gps_view"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="8dp" />
+
+  <androidx.appcompat.widget.SwitchCompat
+    android:id="@+id/nogps_gps_use"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="12dp"
+    android:minHeight="56dp"
+    android:text="@string/nogps_gps_use"
+    android:textSize="16sp" />
+  <!-- Both texts take their place: the sheet doesn't jump as the adapter comes and goes. -->
+  <FrameLayout
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="2dp">
+    <TextView
+      android:id="@+id/nogps_gps_use_hint"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:text="@string/nogps_gps_use_hint"
+      android:textColor="?android:textColorSecondary"
+      android:textSize="13sp" />
+    <TextView
+      android:id="@+id/nogps_gps_use_needs_adapter"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:text="@string/nogps_gps_use_needs_adapter"
+      android:textColor="?android:textColorSecondary"
+      android:textSize="13sp" />
+  </FrameLayout>
+
+  <!-- Other apps take the position of the car while GPS isn't used. -->
+  <androidx.appcompat.widget.SwitchCompat
+    android:id="@+id/nogps_share_position"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="12dp"
+    android:minHeight="56dp"
+    android:text="@string/nogps_share_position"
+    android:textSize="16sp" />
+  <TextView
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="2dp"
+    android:text="@string/nogps_share_position_hint"
+    android:textColor="?android:textColorSecondary"
+    android:textSize="13sp" />
+  <!-- Tapped, opens Developer options. -->
+  <TextView
+    android:id="@+id/nogps_share_position_needs_mock"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="2dp"
+    android:background="?selectableItemBackground"
+    android:paddingVertical="4dp"
+    android:text="@string/nogps_share_position_needs_mock"
+    android:textColor="?colorAccent"
+    android:textSize="13sp"
+    android:visibility="gone" />
 </LinearLayout>
 </androidx.core.widget.NestedScrollView>

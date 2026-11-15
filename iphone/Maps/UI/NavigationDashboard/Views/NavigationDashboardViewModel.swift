@@ -58,7 +58,7 @@ extension NavigationDashboard.ViewModel {
 
   var isBottomActionsMenuHidden: Bool { presentationStep == .hidden }
 
-  /// A new entity comes at every position, 5 times a second with the sensor box. Outside the navigation the dashboard
+  /// A new entity comes at every position, up to 5 times a second with the navigation without GPS. Outside the navigation the dashboard
   /// shows only its estimates and transit steps, so another entity alone doesn't change what is shown.
   func needsRender(after previous: Self) -> Bool {
     var previous = previous

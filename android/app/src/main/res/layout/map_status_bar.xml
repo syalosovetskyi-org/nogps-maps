@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- One button for where the position comes from and its accuracy, see StatusBar: it opens the Box sheet. -->
+<!-- One button for where the position comes from and its accuracy, see StatusBar: it opens the sheet of the
+     inertial navigation. -->
 <LinearLayout
   xmlns:android="http://schemas.android.com/apk/res/android"
   xmlns:app="http://schemas.android.com/apk/res-auto"

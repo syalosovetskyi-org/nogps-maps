@@ -1,4 +1,4 @@
-/// The GPS page of the Box sheet: what GPS is worth now and why, and the details of its last position.
+/// The GPS sheet, opened by the navigation button: what GPS is worth now and why, and the details of its last position.
 final class NoGpsGpsSheet: MWMTableViewController {
   private enum Constants {
     static let refreshInterval: TimeInterval = 1
@@ -27,6 +27,20 @@ final class NoGpsGpsSheet: MWMTableViewController {
   private var timer: Timer?
   private var shownRows: [[Row]] = []
 
+  static func show() {
+    let top = UIViewController.topViewController()
+    // Shown already: a second tap on the button doesn't stack another one.
+    if let navigation = top as? UINavigationController, navigation.viewControllers.first is NoGpsGpsSheet {
+      return
+    }
+    let navigation = UINavigationController(rootViewController: NoGpsGpsSheet(style: .insetGrouped))
+    if let sheet = navigation.sheetPresentationController {
+      sheet.detents = [.medium(), .large()]
+      sheet.prefersGrabberVisible = true
+    }
+    top.present(navigation, animated: true)
+  }
+
   override func viewDidLoad() {
     super.viewDidLoad()
     title = L("nogps_status_gps")
@@ -47,14 +61,6 @@ final class NoGpsGpsSheet: MWMTableViewController {
     super.viewWillDisappear(animated)
     timer?.invalidate()
     timer = nil
-  }
-
-  override func viewDidDisappear(_ animated: Bool) {
-    super.viewDidDisappear(animated)
-    // The sheet is closed from this page, the Box page under it doesn't disappear.
-    if navigationController?.isBeingDismissed == true {
-      (navigationController?.viewControllers.first as? NoGpsBoxSheet)?.stopSearchIfNotFound()
-    }
   }
 
   private func refresh() {

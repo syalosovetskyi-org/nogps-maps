@@ -6,7 +6,6 @@ import static org.junit.Assert.assertTrue;
 
 import app.organicmaps.R;
 import app.organicmaps.sdk.location.NoGps;
-import app.organicmaps.sdk.location.NoGps.BleState;
 import app.organicmaps.sdk.location.NoGps.GpsState;
 import app.organicmaps.sdk.location.NoGps.PositionSource;
 import app.organicmaps.sdk.location.NoGps.SourceState;
@@ -15,18 +14,18 @@ import org.junit.Test;
 
 public class StatusBarTest
 {
-  // The source button of the navigation menu shows the box when the car follows it, or when the mark is set by hand
-  // with a box set up. Else it shows GPS.
+  // The source button of the navigation menu shows the inertial navigation when the car follows it, or when the mark
+  // is set by hand with the inertial navigation on. Else it shows GPS.
   @Test
-  public void navButtonShowsBoxOnlyForBox()
+  public void navButtonShowsInertialOnlyForInertial()
   {
-    assertFalse(StatusBar.navShowsBox(PositionSource.GPS, true));
-    assertFalse(StatusBar.navShowsBox(PositionSource.NETWORK, true));
-    assertTrue(StatusBar.navShowsBox(PositionSource.INERTIAL, true));
-    assertTrue(StatusBar.navShowsBox(PositionSource.MANUAL, true));
-    assertFalse(StatusBar.navShowsBox(PositionSource.MANUAL, false));
-    assertFalse(StatusBar.navShowsBox(PositionSource.NONE, true));
-    assertFalse(StatusBar.navShowsBox(PositionSource.NONE, false));
+    assertFalse(StatusBar.navShowsInertial(PositionSource.GPS, true));
+    assertFalse(StatusBar.navShowsInertial(PositionSource.NETWORK, true));
+    assertTrue(StatusBar.navShowsInertial(PositionSource.INERTIAL, true));
+    assertTrue(StatusBar.navShowsInertial(PositionSource.MANUAL, true));
+    assertFalse(StatusBar.navShowsInertial(PositionSource.MANUAL, false));
+    assertFalse(StatusBar.navShowsInertial(PositionSource.NONE, true));
+    assertFalse(StatusBar.navShowsInertial(PositionSource.NONE, false));
   }
 
   // GPS not used by the car keeps the color of its signal and gets the pause badge.
@@ -59,41 +58,40 @@ public class StatusBarTest
     assertEquals(0, StatusBar.getGpsLook(gpsStatus(GpsState.GOOD)).badge);
   }
 
-  // The phone looks for a sleeping box: the button shows the search with the moon.
+  // The adapter is searched over Bluetooth: the button pulses with the Bluetooth icon.
   @Test
-  public void sleepingBoxShowsTheSearch()
+  public void connectingAdapterShowsBluetooth()
   {
-    final StatusBar.Look look = StatusBar.getBoxLook(boxStatus(SourceState.BOX_SLEEPING, BleState.SEARCHING));
+    final StatusBar.Look look = StatusBar.getInertialLook(inertialStatus(SourceState.CONNECTING));
     assertEquals(R.drawable.ic_nogps_bluetooth, look.icon);
     assertTrue(look.pulsing);
-    assertEquals(R.drawable.ic_nogps_badge_sleep, look.badge);
-  }
-
-  // Bluetooth off matters more than the sleep: the box would not be found when it wakes.
-  @Test
-  public void sleepingBoxWithBluetoothOffShowsIt()
-  {
-    final StatusBar.Look look = StatusBar.getBoxLook(boxStatus(SourceState.BOX_SLEEPING, BleState.DISABLED));
-    assertEquals(R.drawable.ic_nogps_bluetooth_off, look.icon);
-    assertFalse(look.pulsing);
     assertEquals(0, look.badge);
   }
 
-  // The OBD of a box that is heard sleeps: nothing is searched.
+  // The adapter answers, but the car doesn't: an alert.
   @Test
-  public void sleepingObdShowsTheMoon()
+  public void adapterWithoutCarShowsAlert()
   {
-    final StatusBar.Look look = StatusBar.getBoxLook(boxStatus(SourceState.OBD_SLEEPING, BleState.CONNECTED));
-    assertEquals(R.drawable.ic_nogps_box, look.icon);
-    assertFalse(look.pulsing);
-    assertEquals(R.drawable.ic_nogps_badge_sleep, look.badge);
+    final StatusBar.Look look = StatusBar.getInertialLook(inertialStatus(SourceState.NO_CAR_DATA));
+    assertEquals(R.drawable.ic_nogps_inertial, look.icon);
+    assertEquals(R.color.source_warning, look.color);
+    assertEquals(R.drawable.ic_nogps_badge_alert, look.badge);
   }
 
-  // GPS moves the mark: its look, no badge when the box is not a problem.
+  // Off: the button calls to turn it on.
+  @Test
+  public void inertialOffShowsPlus()
+  {
+    final StatusBar.Look look = StatusBar.getInertialLook(new NoGps.Status());
+    assertEquals(R.drawable.ic_nogps_inertial, look.icon);
+    assertEquals(R.drawable.ic_nogps_badge_add, look.badge);
+  }
+
+  // GPS moves the mark: its look, no badge when the adapter is not a problem.
   @Test
   public void barShowsGpsGood()
   {
-    final StatusBar.Look look = StatusBar.getBarLook(boxSetUp(gpsStatus(GpsState.GOOD, PositionSource.GPS)));
+    final StatusBar.Look look = StatusBar.getBarLook(inertialSetUp(gpsStatus(GpsState.GOOD, PositionSource.GPS)));
     assertEquals(R.color.source_good, look.color);
     assertEquals(R.drawable.ic_nogps_gps, look.icon);
     assertFalse(look.pulsing);
@@ -103,7 +101,7 @@ public class StatusBarTest
   @Test
   public void barShowsGpsChecking()
   {
-    final StatusBar.Look look = StatusBar.getBarLook(boxSetUp(gpsStatus(GpsState.CHECKING, PositionSource.GPS)));
+    final StatusBar.Look look = StatusBar.getBarLook(inertialSetUp(gpsStatus(GpsState.CHECKING, PositionSource.GPS)));
     assertEquals(R.color.source_connecting, look.color);
     assertTrue(look.pulsing);
   }
@@ -111,7 +109,7 @@ public class StatusBarTest
   @Test
   public void barShowsGpsCoarse()
   {
-    final StatusBar.Look look = StatusBar.getBarLook(boxSetUp(gpsStatus(GpsState.COARSE, PositionSource.NETWORK)));
+    final StatusBar.Look look = StatusBar.getBarLook(inertialSetUp(gpsStatus(GpsState.COARSE, PositionSource.NETWORK)));
     assertEquals(R.color.source_warning, look.color);
     assertEquals(0, look.badge);
   }
@@ -119,7 +117,7 @@ public class StatusBarTest
   @Test
   public void barShowsGpsSpoofed()
   {
-    final StatusBar.Look look = StatusBar.getBarLook(boxSetUp(gpsStatus(GpsState.SPOOFED, PositionSource.GPS)));
+    final StatusBar.Look look = StatusBar.getBarLook(inertialSetUp(gpsStatus(GpsState.SPOOFED, PositionSource.GPS)));
     assertEquals(R.color.source_warning, look.color);
     assertEquals(R.drawable.ic_nogps_badge_alert, look.badge);
   }
@@ -127,7 +125,7 @@ public class StatusBarTest
   @Test
   public void barShowsNoGps()
   {
-    final StatusBar.Look look = StatusBar.getBarLook(boxSetUp(gpsStatus(GpsState.NONE, PositionSource.NONE)));
+    final StatusBar.Look look = StatusBar.getBarLook(inertialSetUp(gpsStatus(GpsState.NONE, PositionSource.NONE)));
     assertEquals(R.color.source_bad, look.color);
     assertEquals(R.drawable.ic_nogps_gps_off, look.icon);
   }
@@ -136,7 +134,7 @@ public class StatusBarTest
   @Test
   public void barShowsDisabledGps()
   {
-    final NoGps.Status status = boxSetUp(gpsStatus(GpsState.GOOD, PositionSource.MANUAL));
+    final NoGps.Status status = inertialSetUp(gpsStatus(GpsState.GOOD, PositionSource.MANUAL));
     status.inertialEnabled = false;
     status.gpsDisabled = true;
     final StatusBar.Look look = StatusBar.getBarLook(status);
@@ -144,34 +142,34 @@ public class StatusBarTest
     assertEquals(R.drawable.ic_nogps_badge_pause, look.badge);
   }
 
-  // The box moves the mark: purple.
+  // The inertial navigation moves the mark: purple.
   @Test
-  public void barShowsInertialBox()
+  public void barShowsInertial()
   {
-    final NoGps.Status status = boxStatus(SourceState.CONNECTED, BleState.CONNECTED);
+    final NoGps.Status status = inertialStatus(SourceState.CONNECTED);
     setState(status, "source", PositionSource.INERTIAL.ordinal());
     setState(status, "gpsState", GpsState.GOOD.ordinal());
     final StatusBar.Look look = StatusBar.getBarLook(status);
-    assertEquals(R.drawable.ic_nogps_box, look.icon);
+    assertEquals(R.drawable.ic_nogps_inertial, look.icon);
     assertEquals(R.color.source_inertial, look.color);
     assertEquals(0, look.badge);
   }
 
-  // The mark is set by hand with a box set up: the box look.
+  // The mark is set by hand with the inertial navigation on: its look.
   @Test
-  public void barShowsBoxForManualWithBox()
+  public void barShowsInertialForManual()
   {
-    final NoGps.Status status = boxStatus(SourceState.CONNECTED, BleState.CONNECTED);
+    final NoGps.Status status = inertialStatus(SourceState.CONNECTED);
     setState(status, "source", PositionSource.MANUAL.ordinal());
     setState(status, "gpsState", GpsState.GOOD.ordinal());
-    assertEquals(R.drawable.ic_nogps_box, StatusBar.getBarLook(status).icon);
+    assertEquals(R.drawable.ic_nogps_inertial, StatusBar.getBarLook(status).icon);
   }
 
-  // GPS moves the mark: a box that searches is not shown, and a blue box gives no dot.
+  // GPS moves the mark: an adapter that is searched is not shown, and a blue one gives no dot.
   @Test
-  public void barIgnoresSearchingBoxWhileGpsIsGood()
+  public void barIgnoresConnectingAdapterWhileGpsIsGood()
   {
-    final NoGps.Status status = boxStatus(SourceState.DISCONNECTED, BleState.SEARCHING);
+    final NoGps.Status status = inertialStatus(SourceState.CONNECTING);
     setState(status, "source", PositionSource.GPS.ordinal());
     setState(status, "gpsState", GpsState.GOOD.ordinal());
     final StatusBar.Look look = StatusBar.getBarLook(status);
@@ -180,9 +178,9 @@ public class StatusBarTest
     assertEquals(0, look.badge);
   }
 
-  // Without a box the button invites to set one up.
+  // With the inertial navigation off the button invites to turn it on.
   @Test
-  public void barShowsPlusWithoutBox()
+  public void barShowsPlusWithoutInertial()
   {
     final StatusBar.Look look = StatusBar.getBarLook(gpsStatus(GpsState.GOOD, PositionSource.GPS));
     assertEquals(R.drawable.ic_nogps_badge_add, look.badge);
@@ -191,17 +189,17 @@ public class StatusBarTest
 
   // The look's own badge goes before the plus.
   @Test
-  public void barKeepsOwnBadgeWithoutBox()
+  public void barKeepsOwnBadgeWithoutInertial()
   {
     final StatusBar.Look look = StatusBar.getBarLook(gpsStatus(GpsState.SPOOFED, PositionSource.GPS));
     assertEquals(R.drawable.ic_nogps_badge_alert, look.badge);
   }
 
-  // The box moves the mark while GPS is lost: a red dot of GPS.
+  // The inertial navigation moves the mark while GPS is lost: a red dot of GPS.
   @Test
   public void barShowsDotOfOtherSourceWhenBad()
   {
-    final NoGps.Status status = boxStatus(SourceState.CONNECTED, BleState.CONNECTED);
+    final NoGps.Status status = inertialStatus(SourceState.CONNECTED);
     setState(status, "source", PositionSource.INERTIAL.ordinal());
     setState(status, "gpsState", GpsState.NONE.ordinal());
     final StatusBar.Look look = StatusBar.getBarLook(status);
@@ -215,11 +213,11 @@ public class StatusBarTest
     assertEquals(0, StatusBar.getBarLook(status).badge);
   }
 
-  // GPS moves the mark while the box has a car-data problem: an orange dot of the box.
+  // GPS moves the mark while the adapter has a car-data problem: an orange dot of the inertial navigation.
   @Test
-  public void barShowsDotOfBoxProblem()
+  public void barShowsDotOfAdapterProblem()
   {
-    final NoGps.Status status = boxStatus(SourceState.NO_CAR_DATA, BleState.CONNECTED);
+    final NoGps.Status status = inertialStatus(SourceState.NO_CAR_DATA);
     setState(status, "source", PositionSource.GPS.ordinal());
     setState(status, "gpsState", GpsState.GOOD.ordinal());
     final StatusBar.Look look = StatusBar.getBarLook(status);
@@ -234,13 +232,11 @@ public class StatusBarTest
     return status;
   }
 
-  // A box that is connected and does not draw attention.
-  private static NoGps.Status boxSetUp(NoGps.Status status)
+  // An adapter that is connected and does not draw attention.
+  private static NoGps.Status inertialSetUp(NoGps.Status status)
   {
     status.inertialEnabled = true;
-    status.esp32Source = true;
     setState(status, "sourceState", SourceState.CONNECTED.ordinal());
-    setState(status, "bleState", BleState.CONNECTED.ordinal());
     return status;
   }
 
@@ -251,13 +247,11 @@ public class StatusBarTest
     return status;
   }
 
-  private static NoGps.Status boxStatus(SourceState source, BleState ble)
+  private static NoGps.Status inertialStatus(SourceState source)
   {
     final NoGps.Status status = new NoGps.Status();
     status.inertialEnabled = true;
-    status.esp32Source = true;
     setState(status, "sourceState", source.ordinal());
-    setState(status, "bleState", ble.ordinal());
     return status;
   }
 

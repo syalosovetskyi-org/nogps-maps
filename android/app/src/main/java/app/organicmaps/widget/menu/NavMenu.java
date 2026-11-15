@@ -276,7 +276,7 @@ public class NavMenu implements DefaultLifecycleObserver
 
     void onSearchClicked();
 
-    // Opens the Box sheet, with the GPS row in it.
+    // Opens the sheet of the inertial navigation, with the GPS section in it.
     void onSourceClicked();
   }
 }

@@ -56,39 +56,6 @@ std::string FormatOptional(std::optional<double> value)
   std::snprintf(buf, sizeof(buf), "%.1f", *value);
   return buf;
 }
-
-// The boxes of a user are few, the oldest one is forgotten.
-size_t constexpr kMaxKnownBoxes = 8;
-
-/// Remembers how many times the box was powered on by its own count.
-/// \returns true if the box was powered on since it was seen the last time.
-bool SaveBoxPowerOns(Storage & storage, std::string const & id, int64_t powerOns)
-{
-  std::vector<std::pair<std::string, int64_t>> boxes;
-  auto const saved = storage.Get<std::string>(Storage::kBoxPowerOns, "");
-  for (auto const item : strings::Tokenize(saved, ","))
-  {
-    auto const colon = item.find(':');
-    int64_t count;
-    if (colon != std::string_view::npos && strings::to_int(item.substr(colon + 1), count))
-      boxes.emplace_back(item.substr(0, colon), count);
-  }
-  auto const it = std::find_if(boxes.begin(), boxes.end(), [&id](auto const & box) { return box.first == id; });
-  // A box not seen before with no power-ons has got its firmware in its place in the car: it has not moved.
-  if ((it != boxes.end() ? it->second : 0) == powerOns)
-    return false;
-
-  if (it != boxes.end())
-    boxes.erase(it);
-  boxes.emplace_back(id, powerOns);
-  if (boxes.size() > kMaxKnownBoxes)
-    boxes.erase(boxes.begin());
-  std::string text;
-  for (auto const & [boxId, count] : boxes)
-    text += (text.empty() ? "" : ",") + boxId + ":" + std::to_string(count);
-  storage.Set(Storage::kBoxPowerOns, text);
-  return true;
-}
 }  // namespace
 
 Engine::Engine(Delegate & delegate, MapApi & map, Storage & storage, Clock const & clock, Scheduler & scheduler)
@@ -349,28 +316,12 @@ void Engine::OnElm327Bytes(std::string_view data)
   if (!m_inertial)
     return;
   m_inertial->OnElm327Bytes(data);
-  SaveHeardBox();
 }
 
 void Engine::OnElm327Closed(std::string const & reason)
 {
   if (m_inertial)
     m_inertial->OnElm327Closed(reason);
-}
-
-void Engine::OnEsp32BleBytes(std::string_view bytes)
-{
-  if (!m_inertial)
-    return;
-  m_inertial->OnEsp32BleBytes(bytes);
-  SaveHeardBox();
-}
-
-void Engine::OnEsp32BleState(BleState state)
-{
-  CHECK_THREAD_CHECKER(m_threadChecker, ());
-  if (m_inertial)
-    m_inertial->OnEsp32BleState(state);
 }
 
 PositionSource Engine::SourceOf(Fix const & fix)
@@ -558,9 +509,6 @@ void Engine::CheckMotionSourceStopped()
     m_motionSourceWarnedMs.reset();
     return;
   }
-  // The box sleeps with the engine stopped: the car stands, nothing is lost.
-  if (state == SourceState::BoxSleeping || state == SourceState::ObdSleeping)
-    return;
   if (!m_motionSourceWorked || !m_manualMode || MsSince(m_motionSourceWarnedMs) < kMotionSourceWarningIntervalMs)
     return;
   m_motionSourceWarnedMs = m_clock.NowMs();
@@ -569,8 +517,7 @@ void Engine::CheckMotionSourceStopped()
 
 void Engine::CheckNotCalibrated()
 {
-  // The car speed comes, but the gyroscope is not calibrated or the sensor box tells it has been moved: the
-  // position set by the user stands still while the car drives, and the user would not know why.
+  // The car speed comes, but the gyroscope is not calibrated: the position set by the user stands still while the car drives, and the user would not know why.
   bool driving = false;
   if (m_inertial && IsInertialNavigationEnabled() && m_manualMode &&
       m_inertial->GetSourceState() == SourceState::Connected && m_inertial->GetSpeedKmh() >= kNotCalibratedSpeedKmh)
@@ -594,102 +541,6 @@ void Engine::CheckNotCalibrated()
   m_notCalibratedWarnedMs = now;
   LOG(LWARNING, ("The car drives, the gyroscope is not calibrated:", m_inertial->GetCalibrationState()));
   Notify(Event::NotCalibrated);
-}
-
-void Engine::CheckFirmwareUpdate()
-{
-  auto * box = m_inertial && IsInertialNavigationEnabled() ? m_inertial->GetEsp32() : nullptr;
-  auto const state = box ? box->GetUpdate().GetState() : Esp32Update::State::None;
-  if (state != m_firmwareUpdateState)
-  {
-    m_firmwareUpdateState = state;
-    if (state == Esp32Update::State::Done)
-      Notify(Event::FirmwareUpdateDone);
-    else if (state == Esp32Update::State::Failed)
-      Notify(Event::FirmwareUpdateFailed);
-  }
-
-  if (!box || !box->GetInfo())
-  {
-    m_boxKnownSinceMs.reset();
-    m_drivenWithBox = false;
-    return;
-  }
-  int64_t const now = m_clock.NowMs();
-  if (!m_boxKnownSinceMs)
-    m_boxKnownSinceMs = now;
-  if (m_inertial->GetSpeedKmh() > 0)
-    m_drivenWithBox = true;
-  // The box refuses an update while the car drives. The application and its firmware are a pair, they are
-  // checked together: the firmware of the application is offered to a box with a newer one too.
-  auto const * firmware = FindBoxFirmware();
-  if (m_drivenWithBox || now - *m_boxKnownSinceMs < kFirmwareOfferDelayMs || !firmware ||
-      firmware->m_version == box->GetInfo()->m_firmware)
-  {
-    return;
-  }
-  std::string const offer = box->GetInfo()->m_firmware + " to " + firmware->m_version;
-  if (offer == m_offeredFirmware)
-    return;
-  m_offeredFirmware = offer;
-  LOG(LINFO, ("The firmware of the box can be updated:", offer));
-  Notify(Event::FirmwareUpdateAvailable);
-}
-
-void Engine::CheckBoxCalibration()
-{
-  auto const * box = m_inertial && IsInertialNavigationEnabled() ? m_inertial->GetEsp32() : nullptr;
-  if (!box)
-  {
-    m_boxCalibrationAdvicePending = false;
-    return;
-  }
-
-  if (auto const calibrated = box->GetCalibratedMs(); calibrated != m_boxCalibratedMs)
-  {
-    m_boxCalibratedMs = calibrated;
-    if (calibrated)
-    {
-      m_boxCalibrationAdvicePending = false;
-      m_storage.Set(Storage::kBoxCalibrationAdvised, false);
-    }
-  }
-
-  // The box keeps its calibration, but it doesn't know that it was taken out of the car and put in another
-  // way: tilted by less than 20 degrees it tells nothing and measures up to 6 % less of every turn.
-  auto const & info = box->GetInfo();
-  bool poweredOn = false;
-  if (info && info->m_powerOns)
-  {
-    poweredOn = SaveBoxPowerOns(m_storage, info->m_id, *info->m_powerOns);
-    if (poweredOn)
-      LOG(LINFO, ("The box", info->m_id, "was powered on", *info->m_powerOns, "times, it is to be calibrated"));
-  }
-  // A box that doesn't count its power-ons: its journal tells how it has started. Not before the box tells
-  // about itself, not to ask twice.
-  else if (auto const powerOn = box->GetPowerOn(); info && powerOn)
-  {
-    auto const saved = m_storage.Get<int64_t>(Storage::kBoxPowerOnTime, 0);
-    double const tolerance = kSamePowerOnMs + kBoxClockError * powerOn->m_uptimeMs;
-    poweredOn = std::fabs(static_cast<double>(powerOn->m_unixMs - saved)) > tolerance;
-    if (poweredOn)
-    {
-      LOG(LINFO, ("The box was powered on", powerOn->m_uptimeMs / 1000, "s ago, it is to be calibrated"));
-      m_storage.Set(Storage::kBoxPowerOnTime, powerOn->m_unixMs);
-    }
-  }
-  if (poweredOn)
-  {
-    m_storage.Set(Storage::kBoxCalibrationAdvised, true);
-    m_boxCalibrationAdvicePending = true;
-  }
-
-  // The box is calibrated while the car stands.
-  if (m_boxCalibrationAdvicePending && m_inertial->GetSpeedKmh() <= 0)
-  {
-    m_boxCalibrationAdvicePending = false;
-    Notify(Event::BoxCalibrationAdvised);
-  }
 }
 
 void Engine::OnGpsSpoofingChanged(bool spoofed)
@@ -846,15 +697,13 @@ void Engine::StartInertialAtMark(double distanceSinceFixM, double accuracyM)
 
 bool Engine::IsInertialNavigationEnabled() const
 {
-  return m_boxSearched || m_storage.IsInertialEnabled();
+  return m_storage.IsInertialEnabled();
 }
 
 void Engine::SetInertialNavigationEnabled(bool enabled)
 {
-  m_boxSearched = enabled && !m_storage.IsInertialEnabled();
-  LOG(LINFO, ("Box set up by the user =", enabled, "searched =", m_boxSearched));
-  if (!m_boxSearched)
-    m_storage.Set(Storage::kInertialEnabled, enabled);
+  LOG(LINFO, ("Inertial navigation enabled by the user =", enabled));
+  m_storage.Set(Storage::kInertialEnabled, enabled);
   if (enabled)
   {
     StartInertialNavigation();
@@ -862,7 +711,7 @@ void Engine::SetInertialNavigationEnabled(bool enabled)
   }
   if (m_inertial)
     m_inertial->Stop();
-  // Nothing else would drive the car, the box was the only source.
+  // Nothing else would drive the car without GPS.
   SetGpsDisabled(false);
 }
 
@@ -874,11 +723,13 @@ void Engine::SetElm327Address(std::string const & address)
     m_inertial->Start();
 }
 
-void Engine::SetEsp32Source(bool esp32)
+void Engine::SetMotionSourceFactory(InertialNavigator::SourceFactory factory)
 {
-  LOG(LINFO, ("esp32 =", esp32));
-  m_storage.Set(Storage::kEsp32Source, esp32);
-  if (IsInertialNavigationEnabled() && m_inertial)
+  m_sourceFactory = std::move(factory);
+  if (!m_inertial)
+    return;
+  m_inertial->SetSourceFactory(m_sourceFactory);
+  if (IsInertialNavigationEnabled())
     m_inertial->Start();
 }
 
@@ -892,34 +743,6 @@ void Engine::ClearSpeedCalibration()
 {
   if (m_inertial)
     m_inertial->ClearSpeedCalibration();
-}
-
-void Engine::SetFirmwares(std::vector<Firmware> firmwares)
-{
-  m_firmwares = std::move(firmwares);
-}
-
-Firmware const * Engine::FindBoxFirmware()
-{
-  auto * box = m_inertial && IsInertialNavigationEnabled() ? m_inertial->GetEsp32() : nullptr;
-  if (!box || !box->CanUpdate())
-    return nullptr;
-  auto const & info = *box->GetInfo();
-  auto const it = std::find_if(m_firmwares.begin(), m_firmwares.end(), [&info](Firmware const & firmware)
-  { return firmware.m_chip == info.m_chip && firmware.m_board == info.m_board; });
-  return it != m_firmwares.end() ? &*it : nullptr;
-}
-
-void Engine::StartFirmwareUpdate()
-{
-  if (auto const * firmware = FindBoxFirmware())
-    m_inertial->GetEsp32()->StartUpdate(*firmware);
-}
-
-void Engine::CancelFirmwareUpdate()
-{
-  if (m_inertial && m_inertial->GetEsp32())
-    m_inertial->GetEsp32()->CancelUpdate();
 }
 
 void Engine::ReverseDirection()
@@ -1078,24 +901,13 @@ void Engine::StartInertialNavigation()
     InertialNavigator::Listener & listener = *this;
     m_inertial = std::make_unique<InertialNavigator>(m_delegate, m_scheduler, m_clock, m_storage,
                                                      m_map.GetRoads(true /* matchRoute */), listener);
-    // The box set up while the car stands at a mark drives it from there: the manual mode gives it no GPS position
+    m_inertial->SetSourceFactory(m_sourceFactory);
+    // The navigation turned on while the car stands at a mark drives it from there: the manual mode gives it no GPS position
     // to start from, and the mark would stand still while the car drives.
     if (m_manualMode && m_manualLocation)
       StartInertialAtMark();
   }
   m_inertial->Start();
-}
-
-void Engine::SaveHeardBox()
-{
-  if (!m_boxSearched)
-    return;
-  auto const state = m_inertial->GetSourceState();
-  if (state == SourceState::Disconnected || state == SourceState::Connecting)
-    return;
-  LOG(LINFO, ("Box heard, saved as set up"));
-  m_boxSearched = false;
-  m_storage.Set(Storage::kInertialEnabled, true);
 }
 
 bool Engine::IsInertialActive() const
@@ -1504,16 +1316,13 @@ Status Engine::GetStatus()
     status.m_speedLimitKmh = GetSpeedLimitKmh();
 
   status.m_inertialEnabled = IsInertialNavigationEnabled();
-  status.m_esp32Source = m_storage.IsEsp32Source();
   status.m_elm327Address = m_storage.Get<std::string>(Storage::kElm327Address, "");
   status.m_inertialStarted = status.m_inertialEnabled && m_inertial;
   if (status.m_inertialStarted)
   {
     status.m_sourceState = m_inertial->GetSourceState();
-    status.m_bleState = m_inertial->GetBleState();
     status.m_deviceName = m_inertial->GetDeviceName();
     status.m_speedKmh = m_inertial->GetSpeedKmh();
-    status.m_carInfo = m_inertial->GetCarInfo();
     status.m_speedScale = m_inertial->GetSpeedScale();
     status.m_speedTableRanges = m_inertial->GetSpeedTableRanges();
     status.m_roughSpeedTableRanges = m_inertial->GetRoughSpeedTableRanges();
@@ -1525,17 +1334,6 @@ Status Engine::GetStatus()
     status.m_hasInertialPosition = m_inertial->HasPosition();
     status.m_roadLost = m_inertial->IsUserNeeded();
     status.m_otherMarks = static_cast<int>(m_inertial->GetOtherMarksCount());
-    if (auto const * box = m_inertial->GetEsp32())
-    {
-      if (box->GetInfo())
-        status.m_boxFirmware = box->GetInfo()->m_firmware;
-      if (auto const * firmware = FindBoxFirmware())
-        status.m_bundledFirmware = firmware->m_version;
-      status.m_firmwareUpdate = box->GetUpdate().GetState();
-      status.m_firmwareUpdateProgress = box->GetUpdate().GetProgressPercent();
-      status.m_firmwareUpdateError = box->GetUpdate().GetError();
-      status.m_boxCalibrationAdvised = m_storage.Get<bool>(Storage::kBoxCalibrationAdvised, false);
-    }
   }
   return status;
 }
@@ -1543,9 +1341,9 @@ Status Engine::GetStatus()
 bool Engine::LogStateChanges()
 {
   auto const status = GetStatus();
-  std::string box = "NOT_SET_UP";
+  std::string motionSource = "NOT_SET_UP";
   if (status.m_inertialEnabled)
-    box = status.m_inertialStarted ? DebugPrint(status.m_sourceState) : "STOPPED";
+    motionSource = status.m_inertialStarted ? DebugPrint(status.m_sourceState) : "STOPPED";
   auto const log = [](char const * what, std::string & last, std::string now)
   {
     if (last == now)
@@ -1557,8 +1355,7 @@ bool Engine::LogStateChanges()
   bool changed = log("Position source", m_loggedState.m_source, DebugPrint(status.m_source));
   // Not a change: GPS of a phone at home comes and goes with the network positions, 300 times a day.
   log("GPS signal", m_loggedState.m_gps, DebugPrint(status.m_gpsState));
-  changed = log("Box state", m_loggedState.m_box, box) || changed;
-  changed = log("Box Bluetooth", m_loggedState.m_ble, DebugPrint(status.m_bleState)) || changed;
+  changed = log("Motion source state", m_loggedState.m_motionSource, motionSource) || changed;
   return changed;
 }
 
@@ -1571,8 +1368,6 @@ void Engine::LogTrip()
   CheckGpsLost();
   CheckMotionSourceStopped();
   CheckNotCalibrated();
-  CheckFirmwareUpdate();
-  CheckBoxCalibration();
   bool const changed = LogStateChanges();
   SaveCarPosition(false /* now */);
   int64_t const now = m_clock.NowMs();
@@ -1665,32 +1460,16 @@ std::string Engine::GetTripLine()
     line += " obd=" + DebugPrint(m_inertial->GetSourceState()) + " speed=" + std::to_string(m_inertial->GetSpeedKmh());
     // How old the speed is, milliseconds: the car is asked for it a few times a second.
     line += " sage=" + std::to_string(m_inertial->GetSpeedAgeMs());
-    // The ESP32 box: what Bluetooth does, and how its data came during the last second: the lines and the
-    // longest pause between them in milliseconds. "BLE" is from the time the box had Wi-Fi too.
-    if (auto const rate = m_inertial->GetEsp32DataRate())
-    {
-      line += " link=BLE/" + DebugPrint(m_inertial->GetBleState());
-      line += " box=" + std::to_string(rate->m_lines) + "/" + std::to_string(rate->m_maxGapMs);
-      // The firmware of the box and its update with the percent sent.
-      auto const * box = m_inertial->GetEsp32();
-      // The flags of its last data line: the car stands by the box, its sensors and calibrations are fine.
-      std::snprintf(buf, sizeof(buf), " bf=%X", box->GetFlags());
-      line += buf;
-      if (box->GetInfo())
-        line += " fw=" + box->GetInfo()->m_firmware;
-      if (auto const & update = box->GetUpdate(); update.GetState() != Esp32Update::State::None)
-        line += " ota=" + DebugPrint(update.GetState()) + "/" + std::to_string(update.GetProgressPercent());
-    }
     std::snprintf(buf, sizeof(buf), " scale=%.3f table=%d factor=%.3f rough=%d lag=%.2f%s", m_inertial->GetSpeedScale(),
                   m_inertial->GetSpeedTableRanges(), m_inertial->GetSpeedFactor(),
                   m_inertial->GetRoughSpeedTableRanges(), m_inertial->GetSpeedLag(),
                   m_inertial->IsSpeedLagMeasured() ? "" : "/DEFAULT");
     line += buf;
     // The accelerometers against the car speed: how well each follows it, and how far ahead of the car speed
-    // alone the box one has put the position and the phone one would, "-" if it doesn't follow the car.
-    std::snprintf(buf, sizeof(buf), " boxacc=%.2f/", m_inertial->GetBoxAccelCorrelation());
+    // alone the one of the source has put the position and the phone one would, "-" if it doesn't follow the car.
+    std::snprintf(buf, sizeof(buf), " srcacc=%.2f/", m_inertial->GetSourceAccelCorrelation());
     line += buf;
-    if (m_inertial->IsBoxAccelUsed())
+    if (m_inertial->IsSourceAccelUsed())
       std::snprintf(buf, sizeof(buf), "%+.1f", m_inertial->GetAccelAheadM());
     else
       std::snprintf(buf, sizeof(buf), "-");
@@ -1710,7 +1489,7 @@ std::string Engine::GetTripLine()
     line += "/" + DebugPrint(m_inertial->GetHeadingSource());
     line += std::string(" road=") + (m_inertial->IsOnRoad() ? "1" : "0");
     line += std::string(" lost=") + (m_inertial->IsRoadLost() ? "1" : "0");
-    // The car drives backwards by the accelerometer of the box.
+    // The car drives backwards by the accelerometer of the source.
     line += std::string(" back=") + (m_inertial->IsDrivingBack() ? "1" : "0");
     // A turn is being followed to its crossing, all the car has driven, how far and how fast at most it has
     // driven off the roads, and how far along the road a maneuvering car is to be put on.

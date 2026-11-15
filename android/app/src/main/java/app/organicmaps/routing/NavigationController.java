@@ -19,7 +19,7 @@ import androidx.lifecycle.ViewModelProvider;
 import app.organicmaps.MwmApplication;
 import app.organicmaps.R;
 import app.organicmaps.maplayer.MapButtonsViewModel;
-import app.organicmaps.nogps.BoxBottomSheet;
+import app.organicmaps.nogps.SensorsBottomSheet;
 import app.organicmaps.sdk.Router;
 import app.organicmaps.sdk.maplayer.traffic.TrafficManager;
 import app.organicmaps.sdk.routing.RoutingController;
@@ -356,8 +356,8 @@ public class NavigationController implements TrafficManager.TrafficCallback, Nav
   @Override
   public void onSourceClicked()
   {
-    if (mFragmentManager.findFragmentByTag(BoxBottomSheet.TAG) == null)
-      new BoxBottomSheet().show(mFragmentManager, BoxBottomSheet.TAG);
+    if (mFragmentManager.findFragmentByTag(SensorsBottomSheet.TAG) == null)
+      new SensorsBottomSheet().show(mFragmentManager, SensorsBottomSheet.TAG);
   }
 
   private void updateSpeedLimit(@NonNull final RoutingInfo info)

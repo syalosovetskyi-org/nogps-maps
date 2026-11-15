@@ -23,13 +23,13 @@ import app.organicmaps.util.ThemeUtils;
 /**
  * The middle of the bottom bar: one button with where the position of the car comes from and its accuracy. It shows the
  * state of what moves the mark by the shape and the color of the icon and the tint of the background, and opens the
- * Box sheet.
+ * sheet of the inertial navigation.
  */
 public class StatusBar
 {
   interface Listener
   {
-    void showBoxSheet();
+    void showSensorsSheet();
   }
 
   private static final long PULSE_DURATION_MS = 700;
@@ -101,7 +101,7 @@ public class StatusBar
     mNav = new Button(root, root.findViewById(R.id.status_nav_icon), root.findViewById(R.id.status_nav_badge));
     mWord = root.findViewById(R.id.status_word);
     mAccuracy = root.findViewById(R.id.status_accuracy);
-    root.setOnClickListener(v -> listener.showBoxSheet());
+    root.setOnClickListener(v -> listener.showSensorsSheet());
   }
 
   void update(@NonNull NoGps.Status status)
@@ -121,10 +121,10 @@ public class StatusBar
   @NonNull
   public static String getBarDescription(@NonNull Context context, @NonNull NoGps.Status status)
   {
-    final boolean box = navShowsBox(status.getSource(), status.inertialEnabled);
-    final String title = context.getString(box ? R.string.nogps_box_title : R.string.nogps_status_gps);
-    final String state = box ? status.inertialEnabled ? SensorsBottomSheet.boxStateText(context, status) : ""
-                             : getGpsStateText(context, status);
+    final boolean inertial = navShowsInertial(status.getSource(), status.inertialEnabled);
+    final String title = context.getString(inertial ? R.string.nogps_sensors_title : R.string.nogps_status_gps);
+    final String state = inertial ? status.inertialEnabled ? SensorsBottomSheet.adapterStateText(context, status) : ""
+                                  : getGpsStateText(context, status);
     final String accuracy = getAccuracyText(context, status);
     final StringBuilder text = new StringBuilder(title);
     if (!state.isEmpty())
@@ -159,10 +159,10 @@ public class StatusBar
   }
 
   /**
-   * One button for where the position comes from: the box when the car follows it, or when the mark is set by hand
-   * with a box set up, else GPS.
+   * One button for where the position comes from: the inertial navigation when the car follows it, or when the mark is
+   * set by hand with the inertial navigation on, else GPS.
    */
-  public static boolean navShowsBox(@NonNull NoGps.PositionSource source, boolean inertialEnabled)
+  public static boolean navShowsInertial(@NonNull NoGps.PositionSource source, boolean inertialEnabled)
   {
     return switch (source)
     {
@@ -173,8 +173,8 @@ public class StatusBar
   }
 
   /**
-   * The look of the button: of what moves the mark. One badge on it: the look's own, else "+" without a box, else a dot
-   * in the color of the other source when it is orange or red.
+   * The look of the button: of what moves the mark. One badge on it: the look's own, else "+" while the inertial
+   * navigation is off, else a dot in the color of the other source when it is orange or red.
    */
   @NonNull
   public static Look getBarLook(@NonNull NoGps.Status status)
@@ -191,13 +191,13 @@ public class StatusBar
   @NonNull
   private static Look getBarLook(@NonNull NoGps.Status status, @NonNull Look gps)
   {
-    final boolean box = navShowsBox(status.getSource(), status.inertialEnabled);
-    final Look own = box ? getBoxLook(status) : gps;
+    final boolean inertial = navShowsInertial(status.getSource(), status.inertialEnabled);
+    final Look own = inertial ? getInertialLook(status) : gps;
     if (own.badge != 0)
       return own;
     if (!status.inertialEnabled)
       return own.withBadge(R.drawable.ic_nogps_badge_add, R.color.source_connecting);
-    final Look other = box ? gps : getBoxLook(status);
+    final Look other = inertial ? gps : getInertialLook(status);
     if (other.color == R.color.source_warning || other.color == R.color.source_bad)
       return own.withBadge(R.drawable.ic_nogps_badge_dot, other.color);
     return own;
@@ -234,54 +234,20 @@ public class StatusBar
   }
 
   @NonNull
-  public static Look getBoxLook(@NonNull NoGps.Status status)
+  public static Look getInertialLook(@NonNull NoGps.Status status)
   {
-    // No box: the button calls to set one up or to buy it.
+    // Off: the button calls to turn it on and to choose the adapter.
     if (!status.inertialEnabled)
-      return new Look(R.drawable.ic_nogps_box, 0, R.drawable.ic_nogps_badge_add, R.color.source_connecting, false);
+      return new Look(R.drawable.ic_nogps_inertial, 0, R.drawable.ic_nogps_badge_add, R.color.source_connecting,
+                      false);
     return switch (status.getSourceState())
     {
-      case CONNECTED -> new Look(R.drawable.ic_nogps_box, R.color.source_inertial);
-      case UPDATING ->
-        new Look(R.drawable.ic_nogps_box, R.color.source_connecting, R.drawable.ic_nogps_badge_update,
-                 R.color.source_connecting, true);
-      case BOX_SLEEPING -> getBoxSleepingLook(status);
-      case OBD_SLEEPING ->
-        new Look(R.drawable.ic_nogps_box, R.color.source_sleeping, R.drawable.ic_nogps_badge_sleep,
-                 R.color.source_sleeping, false);
-      case NO_CAR_DATA, OBD_DISABLED, OBD_CONNECTING, OBD_ERROR, NO_ADAPTER ->
-        new Look(R.drawable.ic_nogps_box, R.color.source_warning, R.drawable.ic_nogps_badge_alert,
+      case CONNECTED -> new Look(R.drawable.ic_nogps_inertial, R.color.source_inertial);
+      case NO_CAR_DATA, NO_ADAPTER ->
+        new Look(R.drawable.ic_nogps_inertial, R.color.source_warning, R.drawable.ic_nogps_badge_alert,
                  R.color.source_warning, false);
-      case DISCONNECTED, CONNECTING -> getBoxSearchLook(status);
-    };
-  }
-
-  /**
-   * The box is away or its radio is off: the phone keeps looking for it.
-   */
-  @NonNull
-  private static Look getBoxSleepingLook(@NonNull NoGps.Status status)
-  {
-    final Look look = getBoxSearchLook(status);
-    if (!look.pulsing)
-      return look;
-    return new Look(look.icon, look.color, R.drawable.ic_nogps_badge_sleep, R.color.source_sleeping, true);
-  }
-
-  /**
-   * The box is not heard yet: the phone looks for it by Bluetooth, then waits for its data.
-   */
-  @NonNull
-  private static Look getBoxSearchLook(@NonNull NoGps.Status status)
-  {
-    // The ELM327 adapter of the phone is reached without Bluetooth LE.
-    if (!status.esp32Source)
-      return new Look(R.drawable.ic_nogps_bluetooth, R.color.source_connecting, 0, 0, true);
-    return switch (status.getBleState())
-    {
-      case CONNECTED -> new Look(R.drawable.ic_nogps_box, R.color.source_connecting, 0, 0, true);
-      case OFF, NO_PERMISSION, DISABLED -> new Look(R.drawable.ic_nogps_bluetooth_off, R.color.source_sleeping);
-      default -> new Look(R.drawable.ic_nogps_bluetooth, R.color.source_connecting, 0, 0, true);
+      // The ELM327 adapter is reached over Bluetooth.
+      case DISCONNECTED, CONNECTING -> new Look(R.drawable.ic_nogps_bluetooth, R.color.source_connecting, 0, 0, true);
     };
   }
 

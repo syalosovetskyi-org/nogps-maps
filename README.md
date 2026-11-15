@@ -12,8 +12,7 @@ NonGPS Maps — Android-застосунок на основі [Organic Maps](ht
 
 *English summary: an Android fork of Organic Maps for driving under GPS jamming and spoofing. It
 detects spoofed positions, switches to a manual mode and keeps the car on the roads with dead
-reckoning from the phone gyroscope (or an external ESP32 sensor box) and the car speed from an OBD-II
-ELM327 adapter. The firmware of the sensor box: [ELMandIMU](https://github.com/Ramzess-II/ELMandIMU).*
+reckoning from the phone gyroscope and the car speed from an OBD-II ELM327 adapter.*
 
 <p align="center">
   <img src="docs/nogps/inertial.png" width="260" alt="Інерціальна навігація в центрі Дніпра">
@@ -35,9 +34,9 @@ ELM327 adapter. The firmware of the sensor box: [ELMandIMU](https://github.com/R
 ### 🚗 Інерціальна навігація
 - **Телефон + ELM327:** гіроскоп телефона, закріпленого на панелі, і швидкість з OBD-II через
   Bluetooth-адаптер ELM327.
-- **Блок ESP32 (Bluetooth):** зовнішній блок датчиків, жорстко закріплений у машині, передає поворот і
-  швидкість. Прошивка блоку — в окремому репозиторії [ELMandIMU](https://github.com/Ramzess-II/ELMandIMU),
-  технічне завдання на неї і протокол: [`docs/nogps/esp32-firmware-spec.md`](docs/nogps/esp32-firmware-spec.md).
+- Вмикається у вікні «Інерціальна навігація» (кнопка джерела позиції внизу екрана): там одразу є перемикач і
+  рядок «Адаптер» з кнопкою «Вибрати»; вибір адаптера сам вмикає навігацію. Без гіроскопа в телефоні вікно
+  про це каже: тоді доступний лише ручний режим.
 - Машина тримається доріг і маршруту: позиція прив'язується до дороги, поворот переноситься на
   перехрестя, де він справді був, а плавний вигин дороги поворотом не вважається.
 - Якщо розрахунок вивів машину з доріг, позначка зупиняється на дорозі й просить відмітитися.
@@ -69,7 +68,6 @@ ELM327 adapter. The firmware of the sensor box: [ELMandIMU](https://github.com/R
 | Варіант | Що потрібно | Примітки |
 |---|---|---|
 | Телефон + ELM327 | Bluetooth-адаптер ELM327 (класичний Bluetooth), тримач на панелі | Телефон має бути закріплений нерухомо |
-| Блок ESP32 | Блок з гіроскопом і швидкістю з OBD, підключення по Bluetooth LE | Точніше: датчик жорстко закріплений на кузові |
 
 ---
 
@@ -105,15 +103,16 @@ just appstore       # macOS: зібрати релізну збірку iOS з �
 ```
 
 iOS збирається з `xcode/omim.xcworkspace`, схема `OMaps` (див. [iphone/CLAUDE.md](iphone/CLAUDE.md)). На iOS
-рух машини береться тільки з блоку ESP32: iOS не дає застосункам Bluetooth SPP для адаптерів ELM327.
+інерціальної навігації немає: iOS не дає застосункам Bluetooth SPP для адаптерів ELM327, тож там працюють
+детектор підміни GPS і ручний режим.
 
 Карти завантажуються в самому застосунку. Код навігації без GPS спільний для Android та iOS:
 - [`libs/map/nogps`](libs/map/nogps) — детектор підміни, повернення до GPS, ручний режим, інерціальна
-  навігація, калібрування, протоколи ELM327 та ESP32;
+  навігація, калібрування, протокол ELM327;
 - [`libs/routing`](libs/routing), [`libs/map`](libs/map) — прив'язка до доріг і маршруту;
 - [`android/sdk/.../location/`](android/sdk/src/main/java/app/organicmaps/sdk/location/) та
   [`iphone/Maps/Core/NoGps/`](iphone/Maps/Core/NoGps/) — те, що залежить від платформи: позиції, датчики,
-  з'єднання з адаптером і блоком.
+  з'єднання з адаптером.
 
 ---
 
@@ -129,8 +128,6 @@ iOS збирається з `xcode/omim.xcworkspace`, схема `OMaps` (див
 - [x] Релізна збірка: підпис ключем із `app/secure.properties`, нативні бібліотеки вирівняні під 16 КБ.
 - [x] «Поділитися» надсилає посилання openstreetmap.org, нові скриншоти для магазину.
 - [ ] Закритий тест у Google Play (12 тестувальників, 14 днів).
-- [ ] Зовнішній блок датчиків ESP32: [прошивка](https://github.com/Ramzess-II/ELMandIMU) в роботі, корпус,
-      кріплення.
 - [ ] Перевірка в поїздках: кільця, розв'язки, розвилки, затори.
 - [ ] Збір звітів про збої без персональних даних.
 

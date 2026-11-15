@@ -40,14 +40,6 @@ public:
 
   void Elm327Close() override { CallVoid("elm327Close"); }
 
-  void Esp32BleOpen() override { CallVoid("esp32BleOpen"); }
-
-  void Esp32BleSend(std::string const & line) override { CallWithBytes("esp32BleSend", line); }
-
-  void Esp32BleSendFirmware(std::string const & piece) override { CallWithBytes("esp32BleSendFirmware", piece); }
-
-  void Esp32BleClose() override { CallVoid("esp32BleClose"); }
-
   void OnPosition(nogps::Fix const & fix) override
   {
     JNIEnv * env = jni::GetEnv();
@@ -162,10 +154,7 @@ JNIEXPORT void Java_app_organicmaps_sdk_location_NoGps_nativeCreate(JNIEnv *, jc
 {
   CHECK(!g_noGpsDelegate, ());
   g_noGpsDelegate = std::make_unique<NoGpsJniDelegate>(delegate);
-  auto & engine = g_framework->NativeFramework()->CreateNoGps(*g_noGpsDelegate);
-  // The box is the only source of the car movement: the ELM327 adapter of the phone is not offered any more.
-  if (!engine.GetStatus().m_esp32Source)
-    engine.SetEsp32Source(true);
+  g_framework->NativeFramework()->CreateNoGps(*g_noGpsDelegate);
 }
 
 JNIEXPORT void Java_app_organicmaps_sdk_location_NoGps_nativeStart(JNIEnv *, jclass)
@@ -232,16 +221,6 @@ JNIEXPORT void Java_app_organicmaps_sdk_location_NoGps_nativeOnElm327Closed(JNIE
   NoGpsEngine().OnElm327Closed(jni::ToNativeString(env, reason));
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_location_NoGps_nativeOnEsp32BleBytes(JNIEnv * env, jclass, jbyteArray data)
-{
-  NoGpsEngine().OnEsp32BleBytes(NoGpsBytes(env, data));
-}
-
-JNIEXPORT void Java_app_organicmaps_sdk_location_NoGps_nativeOnEsp32BleState(JNIEnv *, jclass, jint state)
-{
-  NoGpsEngine().OnEsp32BleState(static_cast<nogps::BleState>(state));
-}
-
 JNIEXPORT void Java_app_organicmaps_sdk_location_NoGps_nativeSetMarkByTap(JNIEnv *, jclass, jboolean armed)
 {
   NoGpsEngine().SetMarkByTap(armed);
@@ -278,24 +257,9 @@ JNIEXPORT void Java_app_organicmaps_sdk_location_NoGps_nativeSetElm327Address(JN
   NoGpsEngine().SetElm327Address(jni::ToNativeString(env, address));
 }
 
-JNIEXPORT void Java_app_organicmaps_sdk_location_NoGps_nativeSetEsp32Source(JNIEnv *, jclass, jboolean esp32)
-{
-  NoGpsEngine().SetEsp32Source(esp32);
-}
-
 JNIEXPORT void Java_app_organicmaps_sdk_location_NoGps_nativeCalibrate(JNIEnv *, jclass)
 {
   NoGpsEngine().Calibrate();
-}
-
-JNIEXPORT void Java_app_organicmaps_sdk_location_NoGps_nativeStartFirmwareUpdate(JNIEnv *, jclass)
-{
-  NoGpsEngine().StartFirmwareUpdate();
-}
-
-JNIEXPORT void Java_app_organicmaps_sdk_location_NoGps_nativeCancelFirmwareUpdate(JNIEnv *, jclass)
-{
-  NoGpsEngine().CancelFirmwareUpdate();
 }
 
 JNIEXPORT void Java_app_organicmaps_sdk_location_NoGps_nativeClearSpeedCalibration(JNIEnv *, jclass)
@@ -319,24 +283,12 @@ JNIEXPORT void Java_app_organicmaps_sdk_location_NoGps_nativeGetStatus(JNIEnv * 
   SetNoGpsFloat(env, out, "workingNetworkAccuracyM", status.m_workingNetworkAccuracyM.value_or(-1));
   SetNoGpsField(env, out, "movedByHand", status.m_movedByHand);
   SetNoGpsField(env, out, "inertialEnabled", status.m_inertialEnabled);
-  SetNoGpsField(env, out, "esp32Source", status.m_esp32Source);
   SetNoGpsString(env, out, "elm327Address", status.m_elm327Address);
   SetNoGpsField(env, out, "inertialStarted", status.m_inertialStarted);
   SetNoGpsField(env, out, "sourceState", static_cast<int>(status.m_sourceState));
-  SetNoGpsField(env, out, "bleState", static_cast<int>(status.m_bleState));
   SetNoGpsString(env, out, "deviceName", status.m_deviceName);
   SetNoGpsField(env, out, "speedKmh", status.m_speedKmh);
   SetNoGpsField(env, out, "speedLimitKmh", status.m_speedLimitKmh);
-  SetNoGpsField(env, out, "hasCarInfo", status.m_carInfo.has_value());
-  if (auto const & car = status.m_carInfo)
-  {
-    SetNoGpsField(env, out, "engineRunning", car->m_engineRunning ? static_cast<int>(*car->m_engineRunning) : -1);
-    SetNoGpsField(env, out, "rpm", car->m_rpm);
-    SetNoGpsField(env, out, "boxMillivolts", car->m_boxMillivolts);
-    SetNoGpsField(env, out, "elmMillivolts", car->m_elmMillivolts);
-    SetNoGpsField(env, out, "ecuMillivolts", car->m_ecuMillivolts);
-    SetNoGpsField(env, out, "voltageMismatch", car->m_voltageMismatch);
-  }
   SetNoGpsDouble(env, out, "speedScale", status.m_speedScale);
   SetNoGpsField(env, out, "speedTableRanges", status.m_speedTableRanges);
   SetNoGpsField(env, out, "roughSpeedTableRanges", status.m_roughSpeedTableRanges);
@@ -355,11 +307,5 @@ JNIEXPORT void Java_app_organicmaps_sdk_location_NoGps_nativeGetStatus(JNIEnv * 
   SetNoGpsField(env, out, "hasInertialPosition", status.m_hasInertialPosition);
   SetNoGpsField(env, out, "roadLost", status.m_roadLost);
   SetNoGpsField(env, out, "otherMarks", status.m_otherMarks);
-  SetNoGpsString(env, out, "boxFirmware", status.m_boxFirmware);
-  SetNoGpsString(env, out, "bundledFirmware", status.m_bundledFirmware);
-  SetNoGpsField(env, out, "firmwareUpdate", static_cast<int>(status.m_firmwareUpdate));
-  SetNoGpsField(env, out, "firmwareUpdateProgress", status.m_firmwareUpdateProgress);
-  SetNoGpsString(env, out, "firmwareUpdateError", status.m_firmwareUpdateError);
-  SetNoGpsField(env, out, "boxCalibrationAdvised", status.m_boxCalibrationAdvised);
 }
 }  // extern "C"

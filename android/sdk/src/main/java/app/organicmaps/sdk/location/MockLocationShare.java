@@ -54,7 +54,7 @@ public final class MockLocationShare
     private long mStateSinceMs;
 
     /**
-     * @param gpsHeard the system location runs. It is paused while the box follows the car in the background:
+     * @param gpsHeard the system location runs. It is paused while the adapter follows the car in the background:
      *                 GPS can't be heard in a pause then.
      */
     @NonNull

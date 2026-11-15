@@ -55,8 +55,6 @@ final class NoGpsControls: NSObject {
   private var buttonsEdge = NSLayoutConstraint()
   private var buttonsCenterY = NSLayoutConstraint()
   private var timer: Timer?
-  private weak var calibrationAlert: UIAlertController?
-  private weak var firmwareAlert: UIAlertController?
   private let flagRecorder = NoGpsFlagRecorder()
   private let speedView = NoGpsSpeedView()
   private var speedEdge = NSLayoutConstraint()
@@ -349,79 +347,7 @@ final class NoGpsControls: NSObject {
 
   @objc
   private func statusTapped() {
-    Self.showSensors()
-  }
-
-  /// \param onClose is called when the screen is closed.
-  static func showSensors(onClose: (() -> Void)? = nil) {
-    // The calibration alert may come while the screen is open, under another alert too.
-    let top = UIViewController.topViewController()
-    var shown: UIViewController? = top
-    while let controller = shown {
-      if let sensors = (controller as? UINavigationController)?.viewControllers.first as? NoGpsSensorsViewController {
-        // Shown already, e.g. under the calibration alert: its closing is told as well.
-        if let onClose {
-          sensors.onClose = onClose
-        }
-        return
-      }
-      shown = controller.presentingViewController
-    }
-    let sensors = NoGpsSensorsViewController()
-    sensors.onClose = onClose
-    top.present(UINavigationController(rootViewController: sensors), animated: true)
-  }
-
-  /// The sensor box has been plugged in: asks the user to calibrate it, the car should stand on a level place.
-  private func offerBoxCalibration() {
-    // As on Android, not asked in the background: the car may be driving when the user comes back. The sensors
-    // screen still tells to calibrate the box. The box may be powered on again before the user answers.
-    guard UIApplication.shared.applicationState == .active, calibrationAlert == nil else { return }
-    let alert = UIAlertController(title: L("nogps_box_calibration"),
-                                  message: L("nogps_box_calibration_offer"),
-                                  preferredStyle: .alert)
-    alert.addAction(UIAlertAction(title: L("later"), style: .cancel))
-    alert.addAction(UIAlertAction(title: L("nogps_sensors_calibrate_box"), style: .default) { _ in
-      NoGps.calibrate()
-      // It shows how the calibration goes.
-      Self.showSensors()
-    })
-    UIViewController.topViewController().present(alert, animated: true)
-    calibrationAlert = alert
-  }
-
-  /// The box works with another firmware than the app is tested with: asks the user to install the one of the app.
-  private func offerFirmwareUpdate() {
-    // As the calibration, not asked in the background: the car may be driving when the user comes back. The sensors
-    // screen still offers the firmware.
-    let status = NoGps.status()
-    guard UIApplication.shared.applicationState == .active, firmwareAlert == nil, !status.bundledFirmware.isEmpty
-    else { return }
-    let alert = UIAlertController(title: L("nogps_firmware_title"),
-                                  message: String(format: L("nogps_firmware_offer"), status.boxFirmware,
-                                                  status.bundledFirmware),
-                                  preferredStyle: .alert)
-    alert.addAction(UIAlertAction(title: L("later"), style: .cancel))
-    alert.addAction(UIAlertAction(title: String(format: L("nogps_firmware_install"), status.bundledFirmware),
-                                  style: .default) { _ in
-        NoGps.startFirmwareUpdate()
-        // It shows how the update goes.
-        Self.showSensors()
-      })
-    UIViewController.topViewController().present(alert, animated: true)
-    firmwareAlert = alert
-  }
-
-  private func firmwareErrorText(_ code: String) -> String {
-    switch code {
-    case "MOVING": return L("nogps_firmware_error_moving")
-    case "LOW_VOLTAGE": return L("nogps_firmware_error_voltage")
-    case "LINK": return L("nogps_firmware_error_link")
-    case "CANCELED", "ABORTED": return L("nogps_firmware_error_canceled")
-    case "ROLLBACK": return L("nogps_firmware_error_rollback")
-    case "PENDING": return L("nogps_firmware_error_pending")
-    default: return String(format: L("nogps_firmware_error_code"), code)
-    }
+    NoGpsStatusBar.showNavSheet()
   }
 
   /// The log of a test drive is analysed afterwards: the tester marks the moments the car was shown wrong at. The flag
@@ -522,26 +448,16 @@ final class NoGpsControls: NSObject {
     case .gpsRestored: text = L("nogps_gps_restored")
     case .roadLost: text = L("nogps_road_lost")
     case .turnsReversed: text = L("nogps_turns_reversed")
-    // The box is the only source of the car movement on iOS.
-    case .motionSourceStopped: text = L("nogps_box_stopped")
     // The car is always on a road.
     case .markNoRoad: text = L("nogps_mark_no_road")
-    case .notCalibrated:
-      if NoGps.status().calibration == .mountMoved {
-        text = L("nogps_box_moved_stopped")
-      } else {
-        text = L("nogps_box_uncalibrated_stopped")
-      }
-    case .boxCalibrationAdvised:
-      offerBoxCalibration()
+    // Of the inertial navigation, which iOS turns off: it has no source of the car movement. Not shown, logged to tell
+    // that it was on after all.
+    case .motionSourceStopped, .notCalibrated:
+      LOG(.warning, "NoGps event \(raw) of the inertial navigation, which has no source on iOS")
       text = nil
-    case .firmwareUpdateAvailable:
-      offerFirmwareUpdate()
+    @unknown default:
+      LOG(.warning, "Unknown NoGps event \(raw)")
       text = nil
-    case .firmwareUpdateDone: text = String(format: L("nogps_firmware_done"), NoGps.status().boxFirmware)
-    case .firmwareUpdateFailed:
-      text = String(format: L("nogps_firmware_failed"), firmwareErrorText(NoGps.status().firmwareUpdateError))
-    @unknown default: text = nil
     }
     if let text {
       Toast.show(withText: text)

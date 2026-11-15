@@ -30,8 +30,5 @@
 /* Needed to explain why we require access to GPS coordinates when the app is active. */
 "NSLocationWhenInUseUsageDescription" = "Xác định vị trí hiện tại được sử dụng trong các tùy chọn theo tuyến đường và lưu đường đi gần đây của bạn.";
 
-/* Needed to explain why we require access to Bluetooth: the sensor box of the car is reached over Bluetooth LE. */
-"NSBluetoothAlwaysUsageDescription" = "The sensor box in the car gives the turns and the speed of the car over Bluetooth.";
-
 /* Needed to explain why we require access to the microphone: a tester records a voice note to a flag of a test drive. */
 "NSMicrophoneUsageDescription" = "A tester taps the voice flag on the map to record a voice note about the test drive.";

@@ -1,21 +1,15 @@
-/// The middle of the bottom bar: one button with the look of what moves the mark, the source word and the accuracy. A
-/// badge tells about the other source. The button opens the Box sheet with the box and GPS.
+/// The middle of the bottom bar: one button with the look of GPS, the source word and the accuracy. iOS has no source
+/// of the car movement for the inertial navigation, so GPS and the marks of the user move the mark. The button opens
+/// the GPS sheet.
 final class NoGpsStatusBar: UIView {
   private enum Constants {
     static let gpsSymbol = "antenna.radiowaves.left.and.right"
-    static let boxSymbol = "cpu"
   }
 
   /// GPS moves the mark.
   static let goodColor = UIColor { $0.userInterfaceStyle == .dark
     ? UIColor(red: 0x32 / 255, green: 0xD7 / 255, blue: 0x4B / 255, alpha: 1)
     : UIColor(red: 0x1E / 255, green: 0x8E / 255, blue: 0x3E / 255, alpha: 1)
-  }
-
-  /// The box moves the mark.
-  static let inertialColor = UIColor { $0.userInterfaceStyle == .dark
-    ? UIColor(red: 0xBF / 255, green: 0x5A / 255, blue: 0xF2 / 255, alpha: 1)
-    : UIColor(red: 0x8E / 255, green: 0x44 / 255, blue: 0xC4 / 255, alpha: 1)
   }
 
   /// How a state is drawn: the icon, its color, a badge and if it pulses while something is in progress. A badge
@@ -57,36 +51,14 @@ final class NoGpsStatusBar: UIView {
     navSheetButton?.show(status)
   }
 
-  /// Where the position comes from: the box when the car follows it, or when the mark is set by hand with a box set up,
-  /// else GPS.
-  static func navShowsBox(source: NoGpsPositionSource, inertialEnabled: Bool) -> Bool {
-    switch source {
-    case .inertial: return true
-    case .manual: return inertialEnabled
-    case .gps, .network, .none: return false
-    @unknown default: return false
-    }
-  }
-
-  /// The look of the navigation button: of the source that moves the mark, with one badge. Its own badge comes first,
-  /// then "+" without a box, then a dot in the color of the other source when that one is wrong.
+  /// The look of the navigation button: of GPS, with its badge. The mark set by hand is shown with the state of GPS
+  /// too: GPS takes the mark back when it is trusted again.
   static func barLook(_ status: NoGpsStatus) -> Look {
-    let isBox = navShowsBox(source: status.source, inertialEnabled: status.inertialEnabled)
-    var look = isBox ? boxLook(status) : gpsLook(status)
-    guard look.badge == nil else { return look }
-    if !status.inertialEnabled {
-      look.badge = ("plus", .systemBlue)
-    } else {
-      let other = isBox ? gpsLook(status) : boxLook(status)
-      if other.color == .systemOrange || other.color == .systemRed {
-        look.badge = (nil, other.color)
-      }
-    }
-    return look
+    gpsLook(status)
   }
 
   static func showNavSheet() {
-    NoGpsBoxSheet.show()
+    NoGpsGpsSheet.show()
   }
 
   /// The background of the buttons of the bar, Search and Menu too.
@@ -150,40 +122,6 @@ final class NoGpsStatusBar: UIView {
       look.badge = ("pause.fill", .systemGray)
     }
     return look
-  }
-
-  static func boxLook(_ status: NoGpsStatus) -> Look {
-    let chip = UIImage(systemName: Constants.boxSymbol)
-    // No box: the button calls to set one up or to buy it.
-    guard status.inertialEnabled else { return Look(image: chip, color: .secondaryLabel, badge: ("plus", .systemBlue)) }
-    switch status.sourceState {
-    case .connected: return Look(image: chip, color: inertialColor)
-    case .updating: return Look(image: chip, color: .systemBlue, badge: ("arrow.down", .systemBlue), pulsing: true)
-    case .boxSleeping:
-      // The box is away or its radio is off: the phone keeps looking for it.
-      var look = boxSearchLook(status)
-      if look.pulsing {
-        look.badge = ("moon.fill", .systemGray)
-      }
-      return look
-    case .obdSleeping: return Look(image: chip, color: .secondaryLabel, badge: ("moon.fill", .systemGray))
-    case .noCarData, .obdDisabled, .obdConnecting, .obdError, .noAdapter:
-      return Look(image: chip, color: .systemOrange, badge: ("exclamationmark", .systemOrange))
-    case .disconnected, .connecting: return boxSearchLook(status)
-    @unknown default: return boxSearchLook(status)
-    }
-  }
-
-  /// The box is not heard yet: the phone looks for it by Bluetooth, then waits for its data.
-  private static func boxSearchLook(_ status: NoGpsStatus) -> Look {
-    switch status.bleState {
-    case .connected: return Look(image: UIImage(systemName: Constants.boxSymbol), color: .systemBlue, pulsing: true)
-    case .off, .noPermission, .disabled:
-      return Look(image: UIImage(resource: .icNogpsBluetoothOff), color: .secondaryLabel)
-    case .searching, .pairingClosed, .connecting, .pairing:
-      return Look(image: UIImage(resource: .icNogpsBluetooth), color: .systemBlue, pulsing: true)
-    @unknown default: return Look(image: UIImage(resource: .icNogpsBluetooth), color: .systemBlue, pulsing: true)
-    }
   }
 
   static func gpsStateText(_ status: NoGpsStatus) -> String {
@@ -350,18 +288,13 @@ final class NavButton: UIControl {
     accuracy.text = source.accuracy
     accuracy.isHidden = source.accuracy == nil
     accessibilityLabel = [source.word, source.accuracy].compactMap { $0 }.joined(separator: " ")
-    // The states of both sources: the badge tells about the other one.
     var states = [NoGpsStatusBar.gpsStateText(status)]
     if status.gpsDisabled, let why = NoGpsStatusBar.gpsWhyText(status) {
       states.append(why)
     }
-    if status.inertialEnabled {
-      states.append(NoGpsSensorsViewController.boxStateText(status))
-    }
     accessibilityValue = states.joined(separator: ". ")
   }
 
-  /// Also the tiles of the Box sheet.
   static func pulse(_ layer: CALayer, _ on: Bool) {
     // The system removes the animation in the background, the next update adds it again.
     guard on != (layer.animation(forKey: Constants.pulseKey) != nil) else { return }

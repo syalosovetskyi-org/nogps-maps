@@ -26,7 +26,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * What GPS is worth now and why, the details of its last position and the satellites: the GPS page of the Box sheet.
+ * What GPS is worth now and why, the details of its last position and the satellites: the GPS section of the sheet of
+ * the inertial navigation.
  * The owner calls {@link #update} while it is shown.
  */
 public class GpsSheetView extends LinearLayout

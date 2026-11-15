@@ -1,15 +1,12 @@
 package app.organicmaps.sdk.location;
 
-import android.content.Context;
 import android.location.Location;
 import android.location.LocationManager;
-import android.os.Build;
 import androidx.annotation.Keep;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.UiThread;
 import androidx.core.location.LocationCompat;
-import androidx.core.location.LocationManagerCompat;
 import app.organicmaps.sdk.BuildConfig;
 import app.organicmaps.sdk.util.Config;
 import java.util.Locale;
@@ -52,56 +49,8 @@ public final class NoGps
     CONNECTING,
     // The ELM327 adapter doesn't answer: it is not plugged in, switched off or broken.
     NO_ADAPTER,
-    // The sensor box is set up not to use ELM327.
-    OBD_DISABLED,
-    // The sensor box is connected, its ELM327 is being initialized or searches the protocol of the car.
-    OBD_CONNECTING,
-    // ELM327 of the sensor box has a bus error or has stopped answering.
-    OBD_ERROR,
     // Connected, but the car doesn't tell its speed (ignition off, protocol search).
     NO_CAR_DATA,
-    // The sensor box has gone after the engine was stopped: it switches its Wi-Fi off to save the car battery.
-    BOX_SLEEPING,
-    // The sensor box is connected and doesn't talk to the car with the engine stopped.
-    OBD_SLEEPING,
-    CONNECTED,
-    // The sensor box takes a new firmware: it sends no data until it restarts with it.
-    UPDATING,
-  }
-
-  /**
-   * The update of the firmware of the ESP32 sensor box.
-   */
-  public enum FirmwareUpdate
-  {
-    NONE,
-    // The box is asked to take the firmware.
-    STARTING,
-    SENDING,
-    // Everything is sent, the box checks it.
-    VERIFYING,
-    // The box restarts with the new firmware.
-    RESTARTING,
-    DONE,
-    FAILED,
-  }
-
-  /**
-   * What the phone does about the ESP32 sensor box over Bluetooth LE.
-   */
-  public enum BleState
-  {
-    // Bluetooth is not searched: it is not asked for, or the phone has no Bluetooth LE.
-    OFF,
-    NO_PERMISSION,
-    // Bluetooth is switched off on the phone.
-    DISABLED,
-    SEARCHING,
-    // A box is found, but it doesn't know the phone and doesn't accept a new one now.
-    PAIRING_CLOSED,
-    CONNECTING,
-    // The phone asks the user for the code of the box.
-    PAIRING,
     CONNECTED,
   }
 
@@ -112,10 +61,6 @@ public final class NoGps
     DONE,
     // The phone or the car moved during the calibration.
     FAILED_MOVING,
-    // The sensor box has been moved in the car since its calibration.
-    MOUNT_MOVED,
-    // The link to the sensor box was lost during the calibration, it is not connected again yet.
-    LINK_LOST,
   }
 
   public enum Event
@@ -135,17 +80,9 @@ public final class NoGps
     MOTION_SOURCE_STOPPED,
     // The user has tapped the map in the manual mode where there is no road: the car is always on a road.
     MARK_NO_ROAD,
-    // The car drives without GPS, but the gyroscope is not calibrated or the sensor box has been moved: the
-    // position stands still. Repeated while it lasts.
+    // The car drives without GPS, but the gyroscope is not calibrated: the position stands still. Repeated while it
+    // lasts.
     NOT_CALIBRATED,
-    // The sensor box works with another firmware than the application comes with and can take it now.
-    FIRMWARE_UPDATE_AVAILABLE,
-    // The update of the firmware of the sensor box has ended.
-    FIRMWARE_UPDATE_DONE,
-    FIRMWARE_UPDATE_FAILED,
-    // The sensor box has been powered on: it is new in the car, or it was taken out and may be put in another
-    // way. The user should calibrate it on a level place.
-    BOX_CALIBRATION_ADVISED,
   }
 
   // nogps::Provider.
@@ -212,8 +149,6 @@ public final class NoGps
 
     @Keep
     public boolean inertialEnabled;
-    @Keep
-    public boolean esp32Source;
     // Empty if no adapter is chosen.
     @Keep
     public String elm327Address = "";
@@ -223,31 +158,13 @@ public final class NoGps
     @Keep
     int sourceState;
     @Keep
-    int bleState;
-    @Keep
     public String deviceName = "";
     // -1 if unknown.
     @Keep
     public int speedKmh = -1;
-    @Keep
-    public boolean hasCarInfo;
     // The limit of the road the mark is on, the way it goes, in km/h: 0 if there is none, -1 if unknown.
     @Keep
     public int speedLimitKmh = -1;
-    // -1 if unknown, 0 if stopped, 1 if running.
-    @Keep
-    public int engineRunning = -1;
-    // The car data: -1 if unknown.
-    @Keep
-    public int rpm = -1;
-    @Keep
-    public int boxMillivolts = -1;
-    @Keep
-    public int elmMillivolts = -1;
-    @Keep
-    public int ecuMillivolts = -1;
-    @Keep
-    public boolean voltageMismatch;
     @Keep
     public double speedScale = 1;
     @Keep
@@ -277,28 +194,9 @@ public final class NoGps
     // How many other roads the car may be on after a turn that fitted several: the mark can be switched to them.
     @Keep
     public int otherMarks;
-    // The firmware of the ESP32 sensor box, empty until the box tells it.
-    @Keep
-    @NonNull
-    public String boxFirmware = "";
-    // The firmware for this box that comes with the application, if the box can take it now; empty otherwise.
-    @Keep
-    @NonNull
-    public String bundledFirmware = "";
-    @Keep
-    int firmwareUpdate;
-    @Keep
-    public int firmwareUpdateProgress;
-    // Why the update has failed: a code of the box (MOVING, LOW_VOLTAGE etc.) or of the application.
-    @Keep
-    @NonNull
-    public String firmwareUpdateError = "";
-    // The sensor box has been powered on since the user calibrated it.
-    @Keep
-    public boolean boxCalibrationAdvised;
 
     /**
-     * The box or the adapter tells the speed of the car: the car is followed by it. Without the car data, e.g. on a
+     * The adapter tells the speed of the car: the car is followed by it. Without the car data, e.g. on a
      * parking with the engine stopped, the car stands where it is.
      */
     public boolean hasCarData()
@@ -325,22 +223,11 @@ public final class NoGps
     }
 
     @NonNull
-    public BleState getBleState()
-    {
-      return BleState.values()[bleState];
-    }
-
-    @NonNull
     public CalibrationState getCalibration()
     {
       return CalibrationState.values()[calibration];
     }
 
-    @NonNull
-    public FirmwareUpdate getFirmwareUpdate()
-    {
-      return FirmwareUpdate.values()[firmwareUpdate];
-    }
   }
 
   /**
@@ -368,25 +255,6 @@ public final class NoGps
 
     @Keep
     void elm327Close();
-
-    /**
-     * The ESP32 sensor box over Bluetooth LE: the bytes go to {@link #nativeOnEsp32BleBytes}, the state to
-     * {@link #nativeOnEsp32BleState}.
-     */
-    @Keep
-    void esp32BleOpen();
-
-    @Keep
-    void esp32BleSend(@NonNull byte[] line);
-
-    /**
-     * A piece of a new firmware for the box, written to its characteristic for them.
-     */
-    @Keep
-    void esp32BleSendFirmware(@NonNull byte[] piece);
-
-    @Keep
-    void esp32BleClose();
 
     /**
      * The position to show and to navigate by.
@@ -490,21 +358,6 @@ public final class NoGps
     return getVersion() + ", Organic Maps " + BuildConfig.UPSTREAM_VERSION;
   }
 
-  /// Before Android 12 the box is not found while the location of the phone is switched off: a Bluetooth scan finds
-  /// nothing then. The box state is BleState.DISABLED, as with Bluetooth off.
-  public static boolean isLocationOffForBox(@NonNull Context context, @NonNull Status status)
-  {
-    return status.getBleState() == BleState.DISABLED && isLocationOffForBox(context);
-  }
-
-  static boolean isLocationOffForBox(@NonNull Context context)
-  {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
-      return false;
-    final LocationManager manager = (LocationManager) context.getSystemService(Context.LOCATION_SERVICE);
-    return manager != null && !LocationManagerCompat.isLocationEnabled(manager);
-  }
-
   @Nullable
   static Event toEvent(int event)
   {
@@ -533,13 +386,6 @@ public final class NoGps
 
   static native void nativeOnElm327Closed(@NonNull String reason);
 
-  static native void nativeOnEsp32BleBytes(@NonNull byte[] data);
-
-  /**
-   * @param state one of the states of {@link Esp32BleTransport}.
-   */
-  static native void nativeOnEsp32BleState(int state);
-
   /// The next tap on the map shows where the car is, it ends this: the user has pressed the button for it.
   public static native void nativeSetMarkByTap(boolean armed);
 
@@ -562,16 +408,7 @@ public final class NoGps
 
   public static native void nativeSetElm327Address(@NonNull String address);
 
-  public static native void nativeSetEsp32Source(boolean esp32);
-
   public static native void nativeCalibrate();
-
-  /**
-   * Sends the firmware that comes with the application to the sensor box, see {@link Status#bundledFirmware}.
-   */
-  public static native void nativeStartFirmwareUpdate();
-
-  public static native void nativeCancelFirmwareUpdate();
 
   public static native void nativeClearSpeedCalibration();
 

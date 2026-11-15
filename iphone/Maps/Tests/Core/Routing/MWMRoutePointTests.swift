@@ -40,7 +40,7 @@ final class MWMRoutePointTests: XCTestCase {
     XCTAssertEqual(routePoint.title, routePoint.latLonString)
   }
 
-  /// The navigation without GPS shows the car by a mark of the user or by the sensor box also when the location
+  /// The navigation without GPS shows the car by a mark of the user also when the location
   /// services are off or denied, and the route starts there.
   func test_GivenNoGpsMarkWithoutLocationServices_WhenInitializedFromLastLocation_ThenStartsAtTheMark() throws {
     let wasStarted = LocationManager.isStarted()

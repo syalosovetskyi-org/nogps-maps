@@ -20,13 +20,8 @@ NSString * const MWMNoGpsEventKey = @"event";
 
 namespace
 {
-NSData * ToData(std::string const & bytes)
-{
-  return [NSData dataWithBytes:bytes.data() length:bytes.size()];
-}
-
-/// The iOS part of the navigation without GPS: the car movement comes from the ESP32 sensor box only, over Bluetooth
-/// LE. The phone with an ELM327 adapter is not offered: iOS has no Bluetooth SPP for the adapters.
+/// The iOS part of the navigation without GPS: GPS and the marks of the user only. The car movement for the inertial
+/// navigation is not offered: iOS has no Bluetooth SPP for the ELM327 adapters.
 class NoGpsDelegate : public nogps::Delegate
 {
 public:
@@ -36,13 +31,6 @@ public:
   void Elm327Connect(std::string const &) override {}
   void Elm327Write(std::string const &) override {}
   void Elm327Close() override {}
-
-  void Esp32BleOpen() override { [m_esp32 open]; }
-  void Esp32BleSend(std::string const & line) override { [m_esp32 send:ToData(line)]; }
-  void Esp32BleSendFirmware(std::string const & piece) override { [m_esp32 sendFirmware:ToData(piece)]; }
-  void Esp32BleClose() override { [m_esp32 close]; }
-
-  bool IsBoxPairing() const { return m_esp32.isPairing; }
 
   void OnPosition(nogps::Fix const & fix) override
   {
@@ -67,9 +55,6 @@ public:
                                                       MWMNoGpsEventKey: @(static_cast<NSInteger>(event))
                                                     }];
   }
-
-private:
-  Esp32BleTransport * m_esp32 = [[Esp32BleTransport alloc] init];
 };
 
 NoGpsDelegate & Delegate()
@@ -84,9 +69,19 @@ nogps::Engine & Engine()
   if (!engine)
   {
     engine = &GetFramework().CreateNoGps(Delegate());
-    // The box is the only source of the car movement on iOS.
-    if (!engine->GetStatus().m_esp32Source)
-      engine->SetEsp32Source(true);
+    // Nothing drives the car without GPS on iOS: the inertial navigation turned on with the sensor box before it was
+    // removed would wait for an ELM327 adapter that iOS can't reach, and GPS ignored for it would leave the mark
+    // without a source. Turning it off takes GPS back too.
+    if (engine->IsInertialNavigationEnabled())
+    {
+      LOG(LWARNING, ("The inertial navigation is on without a source of the car movement on iOS, turned off"));
+      engine->SetInertialNavigationEnabled(false);
+    }
+    else if (engine->GetStatus().m_gpsDisabled)
+    {
+      LOG(LWARNING, ("GPS is ignored without a source of the car movement on iOS, taken back"));
+      engine->SetGpsDisabled(false);
+    }
   }
   return *engine;
 }
@@ -128,17 +123,8 @@ std::optional<double> NonNegative(double value)
     _inertialEnabled = status.m_inertialEnabled;
     _inertialStarted = status.m_inertialStarted;
     _sourceState = static_cast<MWMNoGpsSourceState>(status.m_sourceState);
-    _bleState = static_cast<MWMNoGpsBleState>(status.m_bleState);
     _deviceName = @(status.m_deviceName.c_str());
     _speedKmh = status.m_speedKmh;
-    _hasCarInfo = status.m_carInfo.has_value();
-    auto const car = status.m_carInfo.value_or(nogps::CarInfo());
-    _engineRunning = car.m_engineRunning ? static_cast<NSInteger>(*car.m_engineRunning) : -1;
-    _rpm = car.m_rpm;
-    _boxMillivolts = car.m_boxMillivolts;
-    _elmMillivolts = car.m_elmMillivolts;
-    _ecuMillivolts = car.m_ecuMillivolts;
-    _voltageMismatch = car.m_voltageMismatch;
     _speedScale = status.m_speedScale;
     _speedTableRanges = status.m_speedTableRanges;
     _roughSpeedTableRanges = status.m_roughSpeedTableRanges;
@@ -155,15 +141,9 @@ std::optional<double> NonNegative(double value)
     _speedLagMeasured = status.m_speedLagMeasured;
     _calibration = static_cast<MWMNoGpsCalibrationState>(status.m_calibration);
     _calibrationProgress = status.m_calibrationProgress;
-    _boxCalibrationAdvised = status.m_boxCalibrationAdvised;
     _hasInertialPosition = status.m_hasInertialPosition;
     _roadLost = status.m_roadLost;
     _otherMarks = status.m_otherMarks;
-    _boxFirmware = @(status.m_boxFirmware.c_str());
-    _bundledFirmware = @(status.m_bundledFirmware.c_str());
-    _firmwareUpdate = static_cast<MWMNoGpsFirmwareUpdate>(status.m_firmwareUpdate);
-    _firmwareUpdateProgress = status.m_firmwareUpdateProgress;
-    _firmwareUpdateError = @(status.m_firmwareUpdateError.c_str());
   }
   return self;
 }
@@ -221,11 +201,7 @@ static CLLocation * lastPlatformLocation;
 
 + (MWMNoGpsStatus *)status
 {
-  auto status = Engine().GetStatus();
-  // The core doesn't know about the pairing: iOS doesn't tell it, see Esp32BleTransport.isPairing.
-  if (Delegate().IsBoxPairing())
-    status.m_bleState = nogps::BleState::Pairing;
-  return [[MWMNoGpsStatus alloc] initWithStatus:status];
+  return [[MWMNoGpsStatus alloc] initWithStatus:Engine().GetStatus()];
 }
 
 + (void)setMarkByTap:(BOOL)armed
@@ -248,46 +224,6 @@ static CLLocation * lastPlatformLocation;
 + (void)switchMark
 {
   Engine().SwitchMark();
-}
-
-+ (void)setGpsDisabled:(BOOL)disabled
-{
-  Engine().SetGpsDisabled(disabled);
-}
-
-+ (void)setInertialNavigationEnabled:(BOOL)enabled
-{
-  Engine().SetInertialNavigationEnabled(enabled);
-}
-
-+ (void)calibrate
-{
-  Engine().Calibrate();
-}
-
-+ (void)clearSpeedCalibration
-{
-  Engine().ClearSpeedCalibration();
-}
-
-+ (void)startFirmwareUpdate
-{
-  Engine().StartFirmwareUpdate();
-}
-
-+ (void)cancelFirmwareUpdate
-{
-  Engine().CancelFirmwareUpdate();
-}
-
-+ (void)onEsp32BleBytes:(NSData *)data
-{
-  Engine().OnEsp32BleBytes({static_cast<char const *>(data.bytes), data.length});
-}
-
-+ (void)onEsp32BleState:(MWMNoGpsBleState)state
-{
-  Engine().OnEsp32BleState(static_cast<nogps::BleState>(state));
 }
 
 @end

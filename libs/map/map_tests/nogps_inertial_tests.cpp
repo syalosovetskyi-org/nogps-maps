@@ -336,7 +336,7 @@ UNIT_TEST(NoGps_AccelLog_JoltOfSensor)
   std::string line;
   for (int i = 0; i <= 50 && line.empty(); ++i)
   {
-    // The box has measured a jolt of 6.8 m/s² inside one of its samples of the second part.
+    // The sensor has measured a jolt of 6.8 m/s² inside one of its samples of the second part.
     if (auto const result = log.OnSample(i * kStepNs, 0, 0, 0.1, i == 15 ? 6.8 : 0.2))
       line = *result;
   }

@@ -5,7 +5,6 @@
 #include "map/nogps/bend_matcher.hpp"
 #include "map/nogps/dead_reckoning.hpp"
 #include "map/nogps/delegate.hpp"
-#include "map/nogps/esp32_source.hpp"
 #include "map/nogps/gyro_calibrator.hpp"
 #include "map/nogps/motion_source.hpp"
 #include "map/nogps/path_matcher.hpp"
@@ -18,6 +17,7 @@
 
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -35,7 +35,7 @@ class Scheduler;
 class Storage;
 
 /// Inertial navigation: the car speed and turns come from a MotionSource, the phone fixed on the dashboard with
-/// an ELM327 OBD-II adapter or the ESP32 sensor box.
+/// an ELM327 OBD-II adapter.
 /// It needs a reference position and heading (from GPS while it was trusted, manual marks or the user) and
 /// a calibrated gyroscope.
 class InertialNavigator : private MotionSource::Listener
@@ -88,8 +88,7 @@ public:
   static double constexpr kMinGpsHeadingSpeedMps = 3;
   static double constexpr kMinAccurateGpsHeadingSpeedMps = 1;
   static double constexpr kMaxGpsHeadingErrorDeg = 10;
-  // A longer pause of the source is a lost connection, the car could do anything meanwhile. The box gives its shorter
-  // pauses in steps, see Esp32Source::kMaxBridgedPauseMs.
+  // A longer pause of the source is a lost connection, the car could do anything meanwhile.
   static double constexpr kMaxMotionDtSec = 1;
   // A second the car stands in goes to the trip log if the car has rotated at least this much in it.
   static double constexpr kGyroLogMinRotationDeg = 1;
@@ -285,7 +284,7 @@ public:
   static double constexpr kMaxRoadConfirmTurnDeg = 15;
   // A road going this much another way is another road.
   static double constexpr kMaxRoadConfirmBearingDiffDeg = 10;
-  // The car speed has no sign. Which way the car has started, the accelerometer of the box tells: the speed it
+  // The car speed has no sign. Which way the car has started, an accelerometer fixed in the car tells: the speed it
   // has felt since the car stood, by the time the car reports that it moves and a little later. The car reports
   // its speed late by the lag, so it stood for sure from when it has reported 0 until the lag and a margin before it
   // has reported that it moves. A stand of 1.5 s between driving back and forth was too short to feel that way, on
@@ -326,8 +325,6 @@ public:
   // A start backward is not always told, so it is learned from at a speed nobody drives backwards at only: a
   // parking maneuver has made it useless for the next 6 minutes of a trip.
   static int64_t constexpr kAccelAfterBackMs = 7000;
-  // What is learned about the accelerometer of the box is saved this often.
-  static int64_t constexpr kBoxAccelSaveMs = 60'000;
   // The speed table is saved once in a while, not on every position.
   static int constexpr kSpeedTableSaveSamples = 30;
   // Before GPS has measured the speed table, e.g. on the first trip, a rough one is learned from the roads. From a
@@ -388,7 +385,7 @@ public:
   /// \returns where the car that has left the roads maneuvering is by the calculation: it is followed apart, its
   /// mark waits on the road until the car drives along a road again or the user marks it. Nothing on a road.
   std::optional<ms::LatLon> const & GetOffRoadCar() const { return m_offRoadCar; }
-  /// \returns true if the car drives backwards by the accelerometer of the box.
+  /// \returns true if the car drives backwards by the accelerometer of the source.
   bool IsDrivingBack() const { return m_direction < 0; }
 
   // The platform events, passed to the source they are for.
@@ -397,8 +394,6 @@ public:
   void OnElm327Connected();
   void OnElm327Bytes(std::string_view data);
   void OnElm327Closed(std::string const & reason);
-  void OnEsp32BleBytes(std::string_view bytes);
-  void OnEsp32BleState(BleState state);
 
   bool IsReady() const;
   bool HasPosition() const { return m_deadReckoning.HasPosition(); }
@@ -411,10 +406,10 @@ public:
   /// \returns how late the car reports its speed, seconds: measured by GPS, or the usual one until then.
   double GetSpeedLag() const { return m_speedLag.Get(); }
   bool IsSpeedLagMeasured() const { return m_speedLag.IsMeasured(); }
-  /// \returns true if the accelerometer of the box tells the speed changes before the car does.
-  bool IsBoxAccelUsed() const { return m_boxAccelSpeed.IsUsable(); }
-  /// \returns how well the accelerometer of the box follows the car, 1 is the best.
-  double GetBoxAccelCorrelation() const { return m_boxAccelSpeed.GetCorrelation(); }
+  /// \returns true if the accelerometer of the source tells the speed changes before the car does.
+  bool IsSourceAccelUsed() const { return m_sourceAccelSpeed.IsUsable(); }
+  /// \returns how well the accelerometer of the source follows the car, 1 is the best.
+  double GetSourceAccelCorrelation() const { return m_sourceAccelSpeed.GetCorrelation(); }
   /// \returns how far the position is ahead of where the car speed alone would put it, meters.
   double GetAccelAheadM() const { return m_accelAheadM; }
   /// The same of the phone accelerometer, which is only watched: nothing if it doesn't follow the car now.
@@ -429,16 +424,13 @@ public:
   /// \returns the factor of the GPS table, see SpeedFactor.
   double GetSpeedFactor() const { return m_speedFactor.Get(); }
   std::string GetSpeedTableDescription() const { return m_speedTable.ToString(); }
-  std::optional<CarInfo> GetCarInfo() const;
   SourceState GetSourceState() const;
   /// \returns the name of the sensor device to show, empty for the phone.
   std::string GetDeviceName() const;
-  /// What the platform does about Bluetooth to reach the ESP32 sensor box.
-  BleState GetBleState() const;
-  /// \returns nothing if the car movement doesn't come from the ESP32 sensor box.
-  std::optional<Esp32Source::DataRate> GetEsp32DataRate() const;
-  /// \returns the ESP32 sensor box, nullptr if the source is another one.
-  Esp32Source * GetEsp32() { return m_esp32; }
+  /// Makes the source of the car movement instead of the phone with the ELM327 adapter, e.g. in the tests: they drive
+  /// the car by it. Taken at the next Start().
+  using SourceFactory = std::function<std::unique_ptr<MotionSource>(MotionSource::Listener & listener)>;
+  void SetSourceFactory(SourceFactory factory) { m_sourceFactory = std::move(factory); }
   /// \returns the last speed in km/h, or -1 if it is unknown or stale.
   int GetSpeedKmh() const;
   /// \returns how long ago the car has measured that speed, -1 if it never did.
@@ -530,7 +522,7 @@ private:
   void NotifyRoadLost();
   void StartFollowingApart();
   void EndFollowingApart();
-  // Tells by the accelerometer of the box which way the car drives, forward or backward.
+  // Tells by the accelerometer of the source which way the car drives, forward or backward.
   void TrackDirection();
   void SetDirection(int direction);
   // Nothing is known about the way the car drives: it drives forward.
@@ -541,10 +533,6 @@ private:
   void CatchUpStart(double speedMps);
   bool HasDrivenBackLately() const;
   void ResetLag();
-  void RestoreBoxAccel();
-  void SaveBoxAccel();
-  // Another box is fixed in another way: what is learned about the accelerometer is of the box it was learned with.
-  void CheckBoxAccel();
   // Looks if the car that is not on a road is next to a roundabout.
   void CheckRoundabout();
   void LeaveRoundabout();
@@ -651,7 +639,7 @@ private:
   std::unique_ptr<MotionSource> m_source;
   // The same source as m_source if it is of this type, to pass the platform events to it.
   PhoneMotion * m_phone = nullptr;
-  Esp32Source * m_esp32 = nullptr;
+  SourceFactory m_sourceFactory;
   bool m_started = false;
 
   int64_t m_lastSnapMs = 0;
@@ -746,10 +734,10 @@ private:
   std::optional<double> m_lagSpeedMps;
   // The position is to be moved back by this distance yet: it is not moved back, it waits.
   double m_lagPendingM = 0;
-  // An accelerometer feels the car speeding up and braking before it reports the speed. The one of the box
-  // is fixed in the car and is used. The phone one is only watched and written to the trip log: on the trips
+  // An accelerometer feels the car speeding up and braking before it reports the speed. The one of a source fixed in
+  // the car is used, see MotionSource::Listener::OnSourceAccel(). The phone one is only watched and written to the trip log: on the trips
   // checked it added centimeters, and a phone taken from its holder would move the position by meters.
-  AccelSpeed m_boxAccelSpeed;
+  AccelSpeed m_sourceAccelSpeed;
   AccelSpeed m_phoneAccelSpeed;
   // How far the accelerometer has put the position ahead of where the changes of the car speed would. It
   // fades away: both tell the same distance in the end, so an error of the accelerometer doesn't stay.
@@ -841,7 +829,7 @@ private:
   bool m_startFelt = true;
   // Until when the car stood for sure before that start.
   int64_t m_startStandToMs = 0;
-  // What the accelerometer of the box has felt along the car standing, m/s2: at the last stand long enough to
+  // What the accelerometer of the source has felt along the car standing, m/s2: at the last stand long enough to
   // feel it, when that was and what the car had driven by then.
   std::optional<double> m_standAccel;
   int64_t m_standAccelMs = 0;
@@ -854,7 +842,7 @@ private:
   // When it drove backwards the last time.
   std::optional<int64_t> m_lastBackMs;
   // The car speed is not heard since the car stood, e.g. the engine was off. The car may start before it is heard
-  // again: when the accelerometer of the box felt that is looked for back from the first speed heard. It stood for
+  // again: when the accelerometer of the source felt that is looked for back from the first speed heard. It stood for
   // sure till the time kept here, with the acceleration along it kept too. On November 11 at 13:00 the speed came
   // 8 s after the start, and the mark stayed 17 m behind the car.
   struct UnheardStand
@@ -863,9 +851,6 @@ private:
     std::optional<double> m_accel;
   };
   std::optional<UnheardStand> m_unheardStand;
-  // The box the accelerometer is learned with, and when it was saved.
-  std::string m_boxAccelId;
-  int64_t m_boxAccelSavedMs = 0;
   // Since when the car followed apart drives fast enough to be on a road.
   std::optional<int64_t> m_fastSinceMs;
 };

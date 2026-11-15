@@ -1,7 +1,6 @@
 #pragma once
 
 #include "map/nogps/delegate.hpp"
-#include "map/nogps/esp32_update.hpp"
 #include "map/nogps/gps_return_detector.hpp"
 #include "map/nogps/gps_spoofing_detector.hpp"
 #include "map/nogps/gyro_calibrator.hpp"
@@ -81,17 +80,13 @@ struct Status
   int m_speedLimitKmh = -1;
 
   bool m_inertialEnabled = false;
-  bool m_esp32Source = false;
   std::string m_elm327Address;
   // The rest is known while the inertial navigation works.
   bool m_inertialStarted = false;
   SourceState m_sourceState = SourceState::Disconnected;
-  // What the platform does to reach the ESP32 sensor box over Bluetooth.
-  BleState m_bleState = BleState::Off;
   std::string m_deviceName;
   // -1 if unknown.
   int m_speedKmh = -1;
-  std::optional<CarInfo> m_carInfo;
   double m_speedScale = 1;
   int m_speedTableRanges = 0;
   // The rough table learned from the roads is used while GPS has measured no range.
@@ -108,18 +103,6 @@ struct Status
   // How many other roads the car may be on after a turn that fitted several, see InertialNavigator::kMaxMarks: the
   // user can switch the mark to them with SwitchMark().
   int m_otherMarks = 0;
-
-  // The firmware of the ESP32 sensor box, empty until the box tells it.
-  std::string m_boxFirmware;
-  // The firmware for this box that comes with the application, if the box can take it now: it is connected
-  // over Bluetooth. Empty otherwise.
-  std::string m_bundledFirmware;
-  Esp32Update::State m_firmwareUpdate = Esp32Update::State::None;
-  int m_firmwareUpdateProgress = 0;
-  // Why the update has failed, see Esp32Update::GetError().
-  std::string m_firmwareUpdateError;
-  // The sensor box has been powered on since the user calibrated it: it may stand in another way now.
-  bool m_boxCalibrationAdvised = false;
 };
 
 /// Navigation without GPS: it chooses the position to show from GPS, cell towers, the marks of the user and the
@@ -189,11 +172,11 @@ public:
   // The state is written to the log every second while the car drives, so a drive can be analysed afterwards.
   static int64_t constexpr kTripLogIntervalMs = 1000;
   // A standing car fills the log with the same lines: hours a day at home and at traffic lights. After a stop, and
-  // after the position source or the box changes, the state is still written every second for this long: the car
+  // after the position source or the state of the adapter changes, the state is still written every second for this long: the car
   // reports its speed late, and the stop is seen.
   static int64_t constexpr kTripLogStandTailMs = 5000;
   // Then once in this time, to show that the application runs and what it has: nogps_replay.py tells by these lines
-  // how long the car with the box connected has stood, and nogps_log.py splits the phone standing at a pause of
+  // how long the car with the adapter connected has stood, and nogps_log.py splits the phone standing at a pause of
   // the TRIP lines of 60 s.
   static int64_t constexpr kTripLogStandIntervalMs = 30'000;
   // GPS of a standing car gives 0-1 km/h.
@@ -216,16 +199,9 @@ public:
   static double constexpr kCarStandsM = 1;
   // The stopped car speed is told repeatedly: a message is easily missed while driving.
   static int64_t constexpr kMotionSourceWarningIntervalMs = 30'000;
-  // The gyroscope not calibrated is told about when the car drives this fast for this long: the sensor box needs
-  // a couple of seconds after it wakes up.
+  // The gyroscope not calibrated is told about when the car drives this fast for this long, not at every start.
   static int constexpr kNotCalibratedSpeedKmh = 10;
   static int64_t constexpr kNotCalibratedDelayMs = 5000;
-  // A new firmware is offered when the sensor box has been heard for this long: it tells the car speed by then.
-  static int64_t constexpr kFirmwareOfferDelayMs = 5000;
-  // Two power-ons of the sensor box are the same one if their times differ less than this and this part of the
-  // time the box has worked since: it sleeps most of its time, and its clock is not exact then.
-  static int64_t constexpr kSamePowerOnMs = 30'000;
-  static double constexpr kBoxClockError = 0.1;
 
   Engine(Delegate & delegate, MapApi & map, Storage & storage, Clock const & clock, Scheduler & scheduler);
   ~Engine() override;
@@ -249,9 +225,6 @@ public:
   void OnElm327Connected();
   void OnElm327Bytes(std::string_view data);
   void OnElm327Closed(std::string const & reason);
-  // The ESP32 sensor box over Bluetooth LE, see Delegate::Esp32BleOpen().
-  void OnEsp32BleBytes(std::string_view bytes);
-  void OnEsp32BleState(BleState state);
 
   bool IsManualMode() const { return m_manualMode; }
   void SetManualMode(bool enabled);
@@ -280,26 +253,20 @@ public:
   /// Shows the car on the next of the other roads it may be on, see Status::m_otherMarks, and rebuilds the route
   /// from there. The road it was shown on stays one of them.
   void SwitchMark();
-  /// Ignores GPS as if it were jammed: the user drives by the sensor box where GPS works. It is kept after a
+  /// Ignores GPS as if it were jammed: the user drives by the inertial navigation where GPS works. It is kept after a
   /// restart, the map shows the choice.
   void SetGpsDisabled(bool disabled);
 
-  /// A box not set up before is searched and saved once it is heard: the app closed in the search has no box.
+  /// The car is followed by the gyroscope of the phone and the speed from the ELM327 adapter. The choice is kept.
   void SetInertialNavigationEnabled(bool enabled);
   bool IsInertialNavigationEnabled() const;
   void SetElm327Address(std::string const & address);
-  /// Chooses where the car movement comes from: the ESP32 sensor box or the phone with an ELM327 adapter.
-  void SetEsp32Source(bool esp32);
+  /// Makes the source of the car movement instead of the phone with the ELM327 adapter, e.g. in the tests. Taken
+  /// when the inertial navigation starts.
+  void SetMotionSourceFactory(InertialNavigator::SourceFactory factory);
   void Calibrate();
   /// Forgets the car speed errors, e.g. after new tyres.
   void ClearSpeedCalibration();
-
-  /// The firmwares of the ESP32 sensor box that come with the application: the box should work with the one
-  /// for it, the application is tested with it.
-  void SetFirmwares(std::vector<Firmware> firmwares);
-  /// Sends the firmware of Status::m_bundledFirmware to the box.
-  void StartFirmwareUpdate();
-  void CancelFirmwareUpdate();
 
   /// \returns true if the position arrow must show the car direction instead of the compass.
   bool IsCarHeadingShown() const;
@@ -337,10 +304,6 @@ private:
   void CheckGpsLost();
   void CheckMotionSourceStopped();
   void CheckNotCalibrated();
-  void CheckFirmwareUpdate();
-  void CheckBoxCalibration();
-  /// \returns the firmware for the connected sensor box, nullptr if there is none or the box can't take it now.
-  Firmware const * FindBoxFirmware();
   void OnGpsSpoofingChanged(bool spoofed);
   void RebuildRouteIfOffRoute(Fix const & fix);
   void LeaveRouteIfBesideIt(Fix const & inertial);
@@ -354,8 +317,6 @@ private:
   /// \param distanceSinceFixM, accuracyM see InertialNavigator::SetPosition().
   void StartInertialAtMark(double distanceSinceFixM = 0, double accuracyM = DeadReckoning::kBaseAccuracyM);
   void StartInertialNavigation();
-  /// The box searched for has sent its data: it is set up.
-  void SaveHeardBox();
   bool IsInertialActive() const;
   std::optional<double> GetCarBearing() const;
   int GetSpeedLimitKmh();
@@ -376,10 +337,10 @@ private:
   std::optional<Fix> GetWorkingNetwork() const;
   PositionSource GetPositionSource() const;
   void LogTrip();
-  // The car drives by the box or by GPS.
+  // The car drives by the adapter or by GPS.
   bool IsCarMoving() const;
-  // Logs the change of the position source, of the GPS signal, of the box and of its Bluetooth link.
-  /// \returns whether the position source or the box has changed.
+  // Logs the change of the position source, of the GPS signal and of the state of the adapter.
+  /// \returns whether the position source or the state of the adapter has changed.
   bool LogStateChanges();
   void Notify(Event event);
 
@@ -395,8 +356,6 @@ private:
   // In the manual mode GPS is ignored (it is jammed or spoofed) and the position is set by the user.
   bool m_manualMode = false;
   bool m_gpsDisabled = false;
-  // A box is searched for and not saved until it is heard.
-  bool m_boxSearched = false;
   std::optional<Fix> m_manualLocation;
   // The next tap on the map shows where the car is.
   bool m_markByTap = false;
@@ -428,6 +387,7 @@ private:
   std::optional<ms::LatLon> m_shiftStopBack;
 
   std::unique_ptr<InertialNavigator> m_inertial;
+  InertialNavigator::SourceFactory m_sourceFactory;
   std::optional<int64_t> m_lastTrustedGpsMs;
   // The last trusted GPS position by its own time, see Fix::m_timeMs: the inertial navigation continues from it.
   std::optional<int64_t> m_lastTrustedGpsTimeMs;
@@ -472,8 +432,7 @@ private:
   {
     std::string m_source;
     std::string m_gps;
-    std::string m_box;
-    std::string m_ble;
+    std::string m_motionSource;
   };
   LoggedState m_loggedState;
   // The motion source of the inertial navigation gave the car speed, the user is told when it stops.
@@ -482,19 +441,6 @@ private:
   // Since when the car drives with the gyroscope not calibrated, and when the user was told about it.
   std::optional<int64_t> m_notCalibratedSinceMs;
   std::optional<int64_t> m_notCalibratedWarnedMs;
-
-  std::vector<Firmware> m_firmwares;
-  Esp32Update::State m_firmwareUpdateState = Esp32Update::State::None;
-  // The firmware of the box and of the application the user was asked about, not to ask again.
-  std::string m_offeredFirmware;
-  // Since when the box is known, and if the car has driven since: the update is offered before a trip, not at
-  // a traffic light.
-  std::optional<int64_t> m_boxKnownSinceMs;
-  bool m_drivenWithBox = false;
-  // The last calibration of the box by the user that is taken into account.
-  std::optional<int64_t> m_boxCalibratedMs;
-  // The box has been powered on, the user is to be told when the car stands.
-  bool m_boxCalibrationAdvicePending = false;
 
   GpsSpoofingDetector m_spoofingDetector;
   GpsReturnDetector m_gpsReturnDetector;

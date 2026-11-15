@@ -142,7 +142,7 @@
   <color name="map_panel">#F5F7F7F7</color>
   <color name="map_panel_edge">#0F000000</color>
   <color name="map_panel_divider">#24000000</color>
-  <!-- The GPS | Box selector and the states of its sources. -->
+  <!-- The GPS | inertial navigation selector and the states of its sources. -->
   <color name="status_button">#1F767680</color>
   <color name="source_good">#FF1E8E3E</color>
   <color name="source_bad">#FFD32F2F</color>

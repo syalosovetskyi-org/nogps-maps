@@ -3,8 +3,8 @@
 #include "map/map_tests/nogps_test_env.hpp"
 
 #include "map/nogps/engine.hpp"
-#include "map/nogps/esp32_protocol.hpp"
 #include "map/nogps/geo.hpp"
+#include "map/nogps/recorded_motion.hpp"
 #include "map/nogps/speed_table.hpp"
 #include "map/nogps/storage.hpp"
 
@@ -28,8 +28,6 @@ namespace nogps_engine_tests
 using namespace nogps;
 using namespace nogps_test;
 
-int constexpr kCalibratedFlags = esp32::kFlagImuOk | esp32::kFlagBiasOk | esp32::kFlagUpOk | esp32::kFlagObdOk;
-
 class Env
 {
 public:
@@ -42,24 +40,33 @@ public:
     m_storage.Set(Storage::kInertialEnabled, inertial);
     if (save)
       save(m_storage);
+    // The car is driven by the test: the source the navigation makes at its start is the recorded one.
+    m_engine.SetMotionSourceFactory([this](MotionSource::Listener & listener)
+    { return std::make_unique<TestSource>(m_clock, listener, m_source); });
     m_engine.Start();
-    ConnectBox();
   }
 
-  /// The platform has found the box and has connected to it.
-  void ConnectBox() { m_engine.OnEsp32BleState(BleState::Connected); }
-
-  /// The ESP32 box sends its data 50 times a second for |ms|: the car drives at |speedKmh| turning at |yawRateDegS|,
-  /// clockwise is positive.
-  void Drive(int64_t ms, int speedKmh, double yawRateDegS, int flags = kCalibratedFlags)
+  /// The source tells the movement 50 times a second for |ms|: the car drives at |speedKmh| turning at |yawRateDegS|,
+  /// clockwise is positive. Not |calibrated|, the rotation is not known.
+  void Drive(int64_t ms, int speedKmh, double yawRateDegS, bool calibrated = true)
   {
     for (int64_t t = 0; t < ms; t += 20)
     {
       m_clock.Advance(20);
-      m_boxTimeMs += 20;
-      m_yawMdeg += yawRateDegS * 20;
-      m_engine.OnEsp32BleBytes(BoxDataLine(++m_seq, m_boxTimeMs, std::llround(m_yawMdeg), speedKmh, flags));
+      RecordedMotion::Part part;
+      part.m_speedKmh = speedKmh;
+      part.m_yawDeltaDeg = yawRateDegS * 0.02;
+      part.m_dtSec = 0.02;
+      part.m_calibrated = calibrated;
+      OnPart(part);
     }
+  }
+
+  /// A part of the movement that ends now, to the source of the navigation if it runs.
+  void OnPart(RecordedMotion::Part const & part)
+  {
+    if (m_source)
+      m_source->OnPart(part);
   }
 
   /// GPS positions every second for |seconds| at |speedMps| from the point, going east along the street.
@@ -72,27 +79,11 @@ public:
     }
   }
 
-  /// The box starts again: it counts its lines, time and rotation from the start.
-  void RestartBox()
-  {
-    m_seq = 0;
-    m_boxTimeMs = 0;
-    m_yawMdeg = 0;
-  }
-
-  /// The box sends nothing, |ms| pass by its clock.
-  void SleepBox(int64_t ms) { m_boxTimeMs += ms; }
-
-  /// The lines of the box are lost for |ms| while the car turns on at |yawRateDegS|.
-  void LoseBoxLines(int64_t ms, double yawRateDegS)
-  {
-    m_clock.Advance(ms);
-    m_boxTimeMs += ms;
-    m_yawMdeg += yawRateDegS * ms;
-  }
-
   Fix const & Last() const { return m_delegate.m_positions.back(); }
 
+  // The source the navigation has made at its last start, nullptr once it is dropped. Before the engine: the engine
+  // drops it when it goes.
+  RecordedMotion * m_source = nullptr;
   TestClock m_clock;
   TestStorage m_storage;
   TestDelegate m_delegate;
@@ -100,9 +91,25 @@ public:
   Engine m_engine{m_delegate, m_map, m_storage, m_clock, m_clock};
 
 private:
-  int64_t m_seq = 0;
-  int64_t m_boxTimeMs = 100'000;
-  double m_yawMdeg = 0;
+  /// Tells the test that the navigation has dropped it.
+  class TestSource : public RecordedMotion
+  {
+  public:
+    TestSource(Clock const & clock, MotionSource::Listener & listener, RecordedMotion *& owner)
+      : RecordedMotion(clock, listener)
+      , m_owner(owner)
+    {
+      m_owner = this;
+    }
+    ~TestSource() override
+    {
+      if (m_owner == this)
+        m_owner = nullptr;
+    }
+
+  private:
+    RecordedMotion *& m_owner;
+  };
 };
 
 void TestAlmostEqualAbs(double actual, double expected, double eps)
@@ -110,7 +117,7 @@ void TestAlmostEqualAbs(double actual, double expected, double eps)
   TEST_ALMOST_EQUAL_ABS(actual, expected, eps, ());
 }
 
-// The car is marked on the street going east, the box tells it stands.
+// The car is marked on the street going east, the source tells it stands.
 void MarkCar(Env & env, double eastM)
 {
   env.m_engine.SetManualMode(true);
@@ -136,76 +143,57 @@ struct NewUser
   Engine m_engine{m_delegate, m_map, m_storage, m_clock, m_clock};
 };
 
-UNIT_TEST(NoGps_Engine_LooksForBoxOverBluetoothOnceSetUp)
+UNIT_TEST(NoGps_Engine_StartsInertialNavigationOnceTurnedOn)
 {
   {
-    // A new install has no box: the app offers to connect one.
+    // A new install has the inertial navigation off.
     NewUser user;
     TEST(!user.Start().m_inertialEnabled, ());
-    TEST(!user.m_delegate.m_esp32BleOpen, ());
     TEST(!user.m_delegate.m_sensorsStarted, ());
-  }
-  {
-    // The box connected once is looked for over Bluetooth.
-    NewUser user;
-    user.m_storage.Set(Storage::kInertialEnabled, true);
-    auto const status = user.Start();
-    TEST(status.m_inertialEnabled, ());
-    TEST(status.m_esp32Source, ());
-    TEST(user.m_delegate.m_esp32BleOpen, ());
     TEST(user.m_delegate.m_elm327Connects.empty(), ());
   }
   {
-    // The user has forgotten the box.
-    NewUser user;
-    user.m_storage.Set(Storage::kInertialEnabled, false);
-    TEST(!user.Start().m_inertialEnabled, ());
-    TEST(!user.m_delegate.m_esp32BleOpen, ());
-    TEST(!user.m_delegate.m_sensorsStarted, ());
-  }
-  {
-    // The box was heard when the navigation was on by default and the choice wasn't saved: it stays.
-    NewUser user;
-    user.m_storage.Set(Storage::kBoxPowerOns, std::string("C47D:3"));
-    TEST(user.Start().m_inertialEnabled, ());
-    TEST(user.m_delegate.m_esp32BleOpen, ());
-  }
-  {
-    // The adapter was chosen when the phone was the default source and the choice wasn't saved: it stays.
-    NewUser user;
-    user.m_storage.Set(Storage::kElm327Address, std::string("00:11:22:33:44:55"));
-    TEST(!user.Start().m_esp32Source, ());
-    TEST(!user.m_delegate.m_esp32BleOpen, ());
-    TEST_EQUAL(user.m_delegate.m_elm327Connects.size(), 1, ());
-  }
-  {
-    // The box was reached over its Wi-Fi, which it has no more: it is found over Bluetooth.
+    // Turned on, the car is turned by the gyroscope of the phone. No adapter is chosen yet.
     NewUser user;
     user.m_storage.Set(Storage::kInertialEnabled, true);
-    user.m_storage.Set(Storage::kEsp32Source, true);
-    user.m_storage.SetString("NoGpsEsp32Bluetooth", "false");
-    TEST(user.Start().m_esp32Source, ());
-    TEST(user.m_delegate.m_esp32BleOpen, ());
+    TEST(user.Start().m_inertialEnabled, ());
+    TEST(user.m_delegate.m_sensorsStarted, ());
+    TEST(user.m_delegate.m_gyroscope, ());
+    TEST(user.m_delegate.m_elm327Connects.empty(), ());
+  }
+  {
+    // The user has turned it off.
+    NewUser user;
+    user.m_storage.Set(Storage::kInertialEnabled, false);
+    user.m_storage.Set(Storage::kElm327Address, std::string("00:11:22:33:44:55"));
+    TEST(!user.Start().m_inertialEnabled, ());
+    TEST(!user.m_delegate.m_sensorsStarted, ());
+    TEST(user.m_delegate.m_elm327Connects.empty(), ());
+  }
+  {
+    // The adapter was chosen when the navigation was on by default and the choice wasn't saved: it stays.
+    NewUser user;
+    user.m_storage.Set(Storage::kElm327Address, std::string("00:11:22:33:44:55"));
+    TEST(user.Start().m_inertialEnabled, ());
+    TEST_EQUAL(user.m_delegate.m_elm327Connects.size(), 1, ());
   }
 }
 
-UNIT_TEST(NoGps_Engine_StartsTheBox)
+UNIT_TEST(NoGps_Engine_StartsTheSource)
 {
   Env env(true /* inertial */);
-  TEST(env.m_delegate.m_esp32BleOpen, ());
-  // The accelerometer goes to the trip log, the gyroscope is in the box.
+  // The accelerometer goes to the trip log, the rotation comes from the source.
   TEST(env.m_delegate.m_sensorsStarted, ());
   TEST(!env.m_delegate.m_gyroscope, ());
   env.Drive(500, 0, 0);
   auto const status = env.m_engine.GetStatus();
   TEST(status.m_inertialStarted, ());
-  TEST(status.m_esp32Source, ());
   TEST_EQUAL(status.m_sourceState, SourceState::Connected, ());
   TEST_EQUAL(status.m_calibration, CalibrationState::Done, ());
   TEST_EQUAL(status.m_speedKmh, 0, ());
 
   env.m_engine.Stop();
-  TEST(!env.m_delegate.m_esp32BleOpen, ());
+  TEST(!env.m_source, ());
   TEST(!env.m_delegate.m_sensorsStarted, ());
 }
 
@@ -451,18 +439,16 @@ UNIT_TEST(NoGps_Engine_TripLogIsWrittenWhileCarMoves)
     // Then seldom: the application runs.
     env.Drive(10 * Engine::kTripLogStandIntervalMs, 0, 0);
     TestStandLines(lines.Take());
-    // The box is lost: the state is written every second again.
-    env.m_engine.OnEsp32BleState(BleState::Searching);
-    env.m_clock.Advance(Engine::kTripLogStandTailMs);
+    // The source is lost: the state is written every second again.
+    env.m_clock.Advance(RecordedMotion::kDataTimeoutMs + Engine::kTripLogStandTailMs);
     TEST_GREATER_OR_EQUAL(lines.Take(), kTailLines, ());
     env.m_clock.Advance(10 * Engine::kTripLogStandIntervalMs);
     TestStandLines(lines.Take());
-    env.ConnectBox();
     env.Drive(3000, 10, 0);
     TEST_GREATER_OR_EQUAL(lines.Take(), 2, ());
   }
   {
-    // GPS alone: no box, the car drives and stands.
+    // GPS alone: no inertial navigation, the car drives and stands.
     Env env(false /* inertial */);
     TripLines lines;
     env.DriveGps(20, 0 /* eastM */, 10 /* speedMps */);
@@ -570,22 +556,6 @@ void TurnLeftAtCrossing(Env & env, double beforeTurnM)
   env.Drive(3000, 36, -30);
   env.Drive(3000, 36, 0);
   // The car is on the street going north from the crossing.
-  TestAlmostEqualAbs(East(env.Last().m_position), 200, 1);
-  TEST_GREATER(North(env.Last().m_position), 20, ());
-  TestAlmostEqualAbs(AngleDiff(*env.Last().m_bearingDeg, 0), 0, 3);
-  TEST(!env.m_delegate.HasEvent(Event::RoadLost), ());
-}
-
-UNIT_TEST(NoGps_Engine_BoxPauseInTurnKeepsHeading)
-{
-  Env env(true /* inertial */);
-  MarkCar(env, 200 - 112);
-  env.Drive(10'000, 36, 0);
-  // The lines of half the turn are lost.
-  env.Drive(1000, 36, -30);
-  env.LoseBoxLines(1500, -30);
-  env.Drive(500, 36, -30);
-  env.Drive(3000, 36, 0);
   TestAlmostEqualAbs(East(env.Last().m_position), 200, 1);
   TEST_GREATER(North(env.Last().m_position), 20, ());
   TestAlmostEqualAbs(AngleDiff(*env.Last().m_bearingDeg, 0), 0, 3);
@@ -2125,7 +2095,7 @@ UNIT_TEST(NoGps_Engine_BendsToldRepeatedlyMoveSlowCar)
   TestAlmostEqualAbs(Distance(env.Last().m_position, car), 0, 4);
 }
 
-UNIT_TEST(NoGps_Engine_TellsThatMovedBoxDoesNotFollowCar)
+UNIT_TEST(NoGps_Engine_TellsThatUncalibratedSourceDoesNotFollowCar)
 {
   Env env(true /* inertial */);
   MarkCar(env, 50);
@@ -2133,13 +2103,12 @@ UNIT_TEST(NoGps_Engine_TellsThatMovedBoxDoesNotFollowCar)
   TEST_GREATER(East(env.Last().m_position), 90, ());
   TEST(!env.m_delegate.HasEvent(Event::NotCalibrated), ());
 
-  // The box tells it has been moved in the car: its rotation is not trusted, the car is not followed.
+  // The source tells its rotation is not known: the car is not followed.
   auto const stopped = env.Last().m_position;
-  int const movedFlags = kCalibratedFlags | esp32::kFlagMountMoved;
-  env.Drive(Engine::kNotCalibratedDelayMs - 1500, 36, 0, movedFlags);
-  // Not at once: the box needs a couple of seconds after it wakes up.
+  env.Drive(Engine::kNotCalibratedDelayMs - 1500, 36, 0, false /* calibrated */);
+  // Not at once: not at every start.
   TEST(!env.m_delegate.HasEvent(Event::NotCalibrated), ());
-  env.Drive(4000, 36, 0, movedFlags);
+  env.Drive(4000, 36, 0, false /* calibrated */);
   TEST(env.m_delegate.HasEvent(Event::NotCalibrated), ());
   TestAlmostEqualAbs(Distance(env.Last().m_position, stopped), 0, 0.01);
 
@@ -2147,246 +2116,14 @@ UNIT_TEST(NoGps_Engine_TellsThatMovedBoxDoesNotFollowCar)
   auto const count = [&env]
   { return std::count(env.m_delegate.m_events.begin(), env.m_delegate.m_events.end(), Event::NotCalibrated); };
   TEST_EQUAL(count(), 1, ());
-  env.Drive(Engine::kMotionSourceWarningIntervalMs, 36, 0, movedFlags);
+  env.Drive(Engine::kMotionSourceWarningIntervalMs, 36, 0, false /* calibrated */);
   TEST_EQUAL(count(), 2, ());
-  env.Drive(Engine::kMotionSourceWarningIntervalMs + 5000, 0, 0, movedFlags);
+  env.Drive(Engine::kMotionSourceWarningIntervalMs + 5000, 0, 0, false /* calibrated */);
   TEST_EQUAL(count(), 2, ());
 
   // Calibrated again: the car is followed.
   env.Drive(3000, 36, 0);
   TEST_GREATER(Distance(env.Last().m_position, stopped), 10, ());
-}
-
-UNIT_TEST(NoGps_Engine_AdvisesToCalibratePluggedBox)
-{
-  Env env(true /* inertial */);
-  auto const count = [&env]
-  { return std::count(env.m_delegate.m_events.begin(), env.m_delegate.m_events.end(), Event::BoxCalibrationAdvised); };
-  auto const advised = [&env] { return env.m_engine.GetStatus().m_boxCalibrationAdvised; };
-  // The first event of the journal of the box: how it has started.
-  auto const boot = [&env](std::string const & reason)
-  { env.m_engine.OnEsp32BleBytes(BoxLine("NGE,1,1,40,I,BOOT,fw 0.3.3 reset " + reason)); };
-  // The box tells about itself, its firmware doesn't count its power-ons.
-  auto const info = [&env]
-  {
-    env.m_engine.OnEsp32BleBytes(
-        BoxLine("NGI,1,0.3.3,2026-10-10T07:33,esp32s3,s3zero,C47D,4096,2031616,ota_0,VALID,WIFI BLE OTA"));
-  };
-
-  // The box was plugged into the car: it may stand in another way than it was calibrated.
-  env.Drive(2000, 0, 0);
-  boot("POWERON");
-  env.Drive(2000, 0, 0);
-  // Not before the box tells what it is.
-  TEST_EQUAL(count(), 0, ());
-  TEST(!advised(), ());
-  info();
-  env.Drive(2000, 0, 0);
-  TEST_EQUAL(count(), 1, ());
-  TEST(advised(), ());
-  // The user is told once, the status tells it until the box is calibrated.
-  env.Drive(5000, 0, 0);
-  TEST_EQUAL(count(), 1, ());
-  TEST(advised(), ());
-
-  env.m_engine.Calibrate();
-  std::string const command = env.m_delegate.m_esp32BleSent.back();
-  auto const idEnd = command.find(",CAL_UP*");
-  TEST(idEnd != std::string::npos, (command));
-  env.m_engine.OnEsp32BleBytes(BoxLine("NGA," + command.substr(5, idEnd - 5) + ",OK"));
-  env.Drive(2000, 0, 0);
-  TEST(!advised(), ());
-
-  // The journal of the box is read again: the same power-on.
-  env.m_engine.SetEsp32Source(true);
-  env.ConnectBox();
-  env.Drive(1000, 0, 0);
-  info();
-  boot("POWERON");
-  env.Drive(2000, 0, 0);
-  TEST_EQUAL(count(), 1, ());
-  TEST(!advised(), ());
-
-  // The box has slept, its clock is 5 % slow then: still the same power-on.
-  env.m_clock.Advance(1'000'000);
-  env.SleepBox(950'000);
-  env.Drive(3000, 0, 0);
-  TEST_EQUAL(count(), 1, ());
-  TEST(!advised(), ());
-
-  // It has restarted by itself and stays in its place.
-  env.RestartBox();
-  env.Drive(1000, 0, 0);
-  boot("SW");
-  env.Drive(2000, 0, 0);
-  TEST_EQUAL(count(), 1, ());
-  TEST(!advised(), ());
-
-  // Plugged in again while the car drives: the user is told when it stops.
-  env.RestartBox();
-  env.Drive(1000, 36, 0);
-  boot("POWERON");
-  env.Drive(3000, 36, 0);
-  TEST_EQUAL(count(), 1, ());
-  TEST(advised(), ());
-  env.Drive(2000, 0, 0);
-  TEST_EQUAL(count(), 2, ());
-}
-
-UNIT_TEST(NoGps_Engine_AdvisesToCalibrateBoxByItsPowerOns)
-{
-  Env env(true /* inertial */);
-  auto const count = [&env]
-  { return std::count(env.m_delegate.m_events.begin(), env.m_delegate.m_events.end(), Event::BoxCalibrationAdvised); };
-  // The box tells how many times it was powered on.
-  auto const info = [&env](std::string const & id, int powerOns)
-  {
-    env.m_engine.OnEsp32BleBytes(BoxLine("NGI,1,0.3.5,2026-10-10T11:00,esp32s3,s3zero," + id +
-                                         ",4096,2031616,ota_0,VALID,WIFI BLE OTA," + std::to_string(powerOns)));
-    env.Drive(2000, 0, 0);
-  };
-
-  // The box has got the counting firmware in its place in the car: it has not moved.
-  info("C47D", 0);
-  TEST_EQUAL(count(), 0, ());
-  TEST(!env.m_engine.GetStatus().m_boxCalibrationAdvised, ());
-
-  // It was taken out and plugged in. Its journal tells the same, the user is asked once.
-  env.RestartBox();
-  env.Drive(1000, 0, 0);
-  env.m_engine.OnEsp32BleBytes(BoxLine("NGE,1,1,40,I,BOOT,fw 0.3.5 reset POWERON"));
-  info("C47D", 1);
-  TEST_EQUAL(count(), 1, ());
-  TEST(env.m_engine.GetStatus().m_boxCalibrationAdvised, ());
-  // The same power-on after a new connection.
-  info("C47D", 1);
-  TEST_EQUAL(count(), 1, ());
-
-  // Another box, new for this phone: it is to be calibrated in its car.
-  info("42FD", 7);
-  TEST_EQUAL(count(), 2, ());
-  // The first one is remembered.
-  info("C47D", 1);
-  info("42FD", 7);
-  TEST_EQUAL(count(), 2, ());
-  TEST_EQUAL(env.m_storage.Get<std::string>(Storage::kBoxPowerOns, ""), "C47D:1,42FD:7", ());
-
-  // Plugged in again while the car drives: the user is told when it stops.
-  env.m_engine.OnEsp32BleBytes(
-      BoxLine("NGI,1,0.3.5,2026-10-10T11:00,esp32s3,s3zero,42FD,4096,2031616,ota_0,VALID,WIFI BLE OTA,8"));
-  env.Drive(3000, 36, 0);
-  TEST_EQUAL(count(), 2, ());
-  env.Drive(2000, 0, 0);
-  TEST_EQUAL(count(), 3, ());
-
-  // The memory of the box was erased with its calibration: it counts from the start.
-  info("42FD", 0);
-  TEST_EQUAL(count(), 4, ());
-}
-
-UNIT_TEST(NoGps_Engine_OffersFirmwareOfApplication)
-{
-  auto const count = [](Env const & env, Event event)
-  { return std::count(env.m_delegate.m_events.begin(), env.m_delegate.m_events.end(), event); };
-  auto const connect = [](Env & env, std::string const & firmware)
-  {
-    env.m_engine.OnEsp32BleState(BleState::Connected);
-    env.m_engine.OnEsp32BleBytes(
-        BoxLine("NGI,1," + firmware + ",2026-10-10T07:33,esp32s3,s3zero,C47D,4096,2031616,ota_0,VALID,WIFI BLE OTA"));
-  };
-  int reads = 0;
-  std::vector<Firmware> const firmwares = {{"0.3.3", "esp32s3", "s3zero", [&reads]
-  {
-    ++reads;
-    return std::string(1000, 'x');
-  }}};
-
-  {
-    // The box works with another firmware than the application comes with: the user is asked once.
-    Env env(true /* inertial */);
-    env.m_engine.SetFirmwares(firmwares);
-    connect(env, "0.3.2");
-    // Not at once: the box tells if the car drives in a moment.
-    env.m_clock.Advance(Engine::kFirmwareOfferDelayMs - Engine::kTripLogIntervalMs);
-    TEST_EQUAL(count(env, Event::FirmwareUpdateAvailable), 0, ());
-    env.m_clock.Advance(Engine::kTripLogIntervalMs * 3);
-    TEST_EQUAL(count(env, Event::FirmwareUpdateAvailable), 1, ());
-    auto status = env.m_engine.GetStatus();
-    TEST_EQUAL(status.m_boxFirmware, "0.3.2", ());
-    TEST_EQUAL(status.m_bundledFirmware, "0.3.3", ());
-    TEST_EQUAL(status.m_firmwareUpdate, Esp32Update::State::None, ());
-    TEST_EQUAL(reads, 0, ());
-
-    env.m_engine.StartFirmwareUpdate();
-    TEST_EQUAL(reads, 1, ());
-    status = env.m_engine.GetStatus();
-    TEST_EQUAL(status.m_firmwareUpdate, Esp32Update::State::Starting, ());
-    TEST_EQUAL(status.m_sourceState, SourceState::Updating, ());
-    TEST(status.m_bundledFirmware.empty(), ());
-    TEST(env.m_delegate.m_esp32BleSent.back().find(",OTA_BEGIN,1000,") != std::string::npos, ());
-
-    env.m_engine.CancelFirmwareUpdate();
-    env.m_clock.Advance(Engine::kTripLogIntervalMs);
-    TEST_EQUAL(count(env, Event::FirmwareUpdateFailed), 1, ());
-    TEST_EQUAL(env.m_engine.GetStatus().m_firmwareUpdateError, "CANCELED", ());
-    // Not asked again about the same firmware.
-    env.m_clock.Advance(Engine::kFirmwareOfferDelayMs * 2);
-    TEST_EQUAL(count(env, Event::FirmwareUpdateAvailable), 1, ());
-  }
-  {
-    // The same firmware: nothing to ask about, but it can be sent again.
-    Env env(true /* inertial */);
-    env.m_engine.SetFirmwares(firmwares);
-    connect(env, "0.3.3");
-    env.m_clock.Advance(Engine::kFirmwareOfferDelayMs * 2);
-    TEST_EQUAL(count(env, Event::FirmwareUpdateAvailable), 0, ());
-    TEST_EQUAL(env.m_engine.GetStatus().m_bundledFirmware, "0.3.3", ());
-  }
-  {
-    // The car drives: the user is asked before the next trip, when the box is connected again.
-    Env env(true /* inertial */);
-    env.m_engine.SetFirmwares(firmwares);
-    connect(env, "0.3.2");
-    int64_t seq = 0;
-    auto const drive = [&](int64_t ms, int speedKmh)
-    {
-      for (int64_t t = 0; t < ms; t += 20)
-      {
-        env.m_clock.Advance(20);
-        ++seq;
-        env.m_engine.OnEsp32BleBytes(BoxDataLine(seq, 100'000 + seq * 20, 0, speedKmh, kCalibratedFlags));
-      }
-    };
-    drive(1500, 36);
-    drive(Engine::kFirmwareOfferDelayMs * 2, 0);
-    TEST_EQUAL(count(env, Event::FirmwareUpdateAvailable), 0, ());
-    env.m_engine.OnEsp32BleState(BleState::Searching);
-    env.m_clock.Advance(Engine::kTripLogIntervalMs);
-    connect(env, "0.3.2");
-    drive(Engine::kFirmwareOfferDelayMs + Engine::kTripLogIntervalMs * 2, 0);
-    TEST_EQUAL(count(env, Event::FirmwareUpdateAvailable), 1, ());
-  }
-  {
-    // A box of another kind is not updated.
-    Env env(true /* inertial */);
-    env.m_engine.SetFirmwares({{"0.3.3", "esp32c3", "c3supermini", [] { return std::string(); }}});
-    connect(env, "0.3.2");
-    env.m_clock.Advance(Engine::kFirmwareOfferDelayMs * 2);
-    TEST_EQUAL(count(env, Event::FirmwareUpdateAvailable), 0, ());
-    auto const status = env.m_engine.GetStatus();
-    TEST_EQUAL(status.m_boxFirmware, "0.3.2", ());
-    TEST(status.m_bundledFirmware.empty(), ());
-  }
-  {
-    // The application and its firmware are a pair: the box with a newer firmware is offered the older one of the
-    // application.
-    Env env(true /* inertial */);
-    env.m_engine.SetFirmwares(firmwares);
-    connect(env, "0.4.0");
-    env.m_clock.Advance(Engine::kFirmwareOfferDelayMs * 2);
-    TEST_EQUAL(count(env, Event::FirmwareUpdateAvailable), 1, ());
-    TEST_EQUAL(env.m_engine.GetStatus().m_bundledFirmware, "0.3.3", ());
-  }
 }
 
 /// Drives along a street going east at 72 km/h, the car looks aside of the street by |asideDeg(t)| degrees.
@@ -2738,13 +2475,13 @@ UNIT_TEST(NoGps_Engine_ManeuveringCarIsNotThrownToRoadAside)
   }
 }
 
-/// A car with the sensor box: it speeds up, brakes and turns as the test tells, backwards too. The box reports the
-/// speed of the car 1.2 s late and without a sign.
-class BoxCar
+/// A car with a source fixed in it: it speeds up, brakes and turns as the test tells, backwards too. The source reports
+/// the speed of the car 1.2 s late and without a sign.
+class SensorCar
 {
 public:
-  /// \param accelerometer the box has one, it looks forward with its first horizontal axis.
-  BoxCar(Env & env, double eastM, bool accelerometer)
+  /// \param accelerometer the source has one, it looks forward with its first horizontal axis.
+  SensorCar(Env & env, double eastM, bool accelerometer)
     : m_env(env)
     , m_accelerometer(accelerometer)
     , m_east(eastM)
@@ -2762,7 +2499,7 @@ public:
       m_east += m_speed * 0.02 * std::sin(math::DegToRad(m_headingDeg));
       m_north += m_speed * 0.02 * std::cos(math::DegToRad(m_headingDeg));
       m_speeds.push_back(std::fabs(m_speed));
-      // The box sends the last speed it has heard, and how long ago.
+      // The source sends the last speed it has heard, and how long ago.
       if (m_speedUnheard)
       {
         m_speedAgeMs += 20;
@@ -2775,21 +2512,22 @@ public:
       m_speeds.pop_front();
 
       m_env.m_clock.Advance(20);
-      m_boxTimeMs += 20;
-      char body[160];
-      int const length =
-          std::snprintf(body, sizeof(body), "NGD,1,%lld,%lld,%lld,0,0,%d,%d,%X", static_cast<long long>(++m_seq),
-                        static_cast<long long>(m_boxTimeMs), static_cast<long long>(std::llround(m_yawMdeg)),
-                        m_reportedKmh, m_speedAgeMs, kCalibratedFlags);
+      RecordedMotion::Part part;
+      part.m_speedKmh = m_reportedKmh;
+      part.m_speedAgeMs = m_speedAgeMs;
+      // The rotation is counted in millidegrees, as the sensor tells it.
+      int64_t const yawMdeg = std::llround(m_yawMdeg);
+      part.m_yawDeltaDeg = (yawMdeg - m_sentYawMdeg) / 1000.0;
+      m_sentYawMdeg = yawMdeg;
+      part.m_dtSec = 0.02;
       // A little of the gravity is left in the other axes.
       if (m_accelerometer)
-        std::snprintf(body + length, sizeof(body) - length, ",%d,50,-60,100",
-                      static_cast<int>(std::lround((m_accelSign * accelerationMps2 + m_slopeMps2) * 1000)));
-      m_env.m_engine.OnEsp32BleBytes(BoxLine(body));
+        part.m_accel = {{std::lround((m_accelSign * accelerationMps2 + m_slopeMps2) * 1000) / 1000.0, 0.05, -0.06}};
+      m_env.OnPart(part);
     }
   }
 
-  /// The car speeds up and brakes four times, 900 m along its way, and stands: the box learns where its
+  /// The car speeds up and brakes four times, 900 m along its way, and stands: the source learns where its
   /// accelerometer looks.
   void SpeedUpAndBrake()
   {
@@ -2809,9 +2547,9 @@ public:
   double m_slopeMps2 = 0;
   // The car reports at least this speed, e.g. 1 km/h while it changes the gear.
   int m_minReportedKmh = 0;
-  // -1: the box is put in turned around.
+  // -1: the source is put in turned around.
   double m_accelSign = 1;
-  // The box doesn't hear the car speed, e.g. while the engine is off.
+  // The source doesn't hear the car speed, e.g. while the engine is off.
   bool m_speedUnheard = false;
 
 private:
@@ -2826,9 +2564,8 @@ private:
   std::deque<double> m_speeds;
   int m_reportedKmh = 0;
   int m_speedAgeMs = 0;
-  int64_t m_seq = 1000;
-  int64_t m_boxTimeMs = 200'000;
   double m_yawMdeg = 0;
+  int64_t m_sentYawMdeg = 0;
 };
 
 UNIT_TEST(NoGps_Engine_AccelerometerTellsCarInYardDrivesBack)
@@ -2838,7 +2575,7 @@ UNIT_TEST(NoGps_Engine_AccelerometerTellsCarInYardDrivesBack)
   {
     Env env(true /* inertial */, &roads);
     MarkCar(env, -450);
-    BoxCar car(env, -450, accelerometer);
+    SensorCar car(env, -450, accelerometer);
     car.SpeedUpAndBrake();
     TestAlmostEqualAbs(East(env.Last().m_position), car.East(), 5);
 
@@ -2888,7 +2625,7 @@ UNIT_TEST(NoGps_Engine_TurnStartedBeforeCarReportsSpeedIsNotLost)
   PieceRoads roads({{-2000, 0, 3000, 0}}, {});
   Env env(true /* inertial */, &roads);
   MarkCar(env, 0);
-  BoxCar car(env, 0, false /* accelerometer */);
+  SensorCar car(env, 0, false /* accelerometer */);
   car.Drive(3, 0, 0);
   TestAlmostEqualAbs(AngleDiff(*env.Last().m_bearingDeg, 90), 0, 1);
   // The car starts and turns right at once, by 90 degrees in 4.5 s. It reports that it moves 1.3 s later: it has
@@ -2905,13 +2642,13 @@ UNIT_TEST(NoGps_Engine_StartBeforeCarSpeedIsHeardIsNotLost)
   {
     Env env(true /* inertial */, &roads);
     MarkCar(env, -450);
-    BoxCar car(env, -450, accelerometer);
+    SensorCar car(env, -450, accelerometer);
     car.SpeedUpAndBrake();
     car.Drive(3, 0, 0);
     TestAlmostEqualAbs(East(env.Last().m_position), car.East(), 5);
     double const stoodEast = East(env.Last().m_position) - car.East();
 
-    // The engine is off for 30 s, and the box doesn't hear the car speed. The car starts at once after the engine,
+    // The engine is off for 30 s, and the source doesn't hear the car speed. The car starts at once after the engine,
     // and its speed is heard 6 s later only, when it has driven 18 m.
     car.m_speedUnheard = true;
     car.Drive(30, 0, 0);
@@ -2933,7 +2670,7 @@ UNIT_TEST(NoGps_Engine_TurnBeforeCarSpeedIsHeardIsNotLost)
   PieceRoads roads({{-2000, 0, 3000, 0}}, {});
   Env env(true /* inertial */, &roads);
   MarkCar(env, -450);
-  BoxCar car(env, -450, true /* accelerometer */);
+  SensorCar car(env, -450, true /* accelerometer */);
   car.SpeedUpAndBrake();
   car.Drive(3, 0, 0);
   // The car speed is not heard. The gyroscope drifts by 0.5 deg/s, the car stands: that is not its turn.
@@ -2953,7 +2690,7 @@ UNIT_TEST(NoGps_Engine_AccelerometerTellsCarOnRoadDrivesBack)
   {
     Env env(true /* inertial */, &roads);
     MarkCar(env, -450);
-    BoxCar car(env, -450, accelerometer);
+    SensorCar car(env, -450, accelerometer);
     car.SpeedUpAndBrake();
     TestAlmostEqualAbs(East(env.Last().m_position), car.East(), 5);
     double const stoppedEast = East(env.Last().m_position);
@@ -2989,7 +2726,7 @@ UNIT_TEST(NoGps_Engine_CarBackingIntoSideStreetIsFollowed)
   PieceRoads roads({{-2000, 0, 3000, 0}, {0, -500, 0, 500}}, {{0, 0}});
   Env env(true /* inertial */, &roads);
   MarkCar(env, -890);
-  BoxCar car(env, -890, true /* accelerometer */);
+  SensorCar car(env, -890, true /* accelerometer */);
   // The car stops 10 m after the crossing, the user marks it there.
   car.SpeedUpAndBrake();
   TestAlmostEqualAbs(car.East(), 10, 0.5);
@@ -3026,7 +2763,7 @@ UNIT_TEST(NoGps_Engine_CarDrivingFastDoesNotDriveBack)
   PieceRoads roads({{-2000, 0, 3000, 0}}, {});
   Env env(true /* inertial */, &roads);
   MarkCar(env, -450);
-  BoxCar car(env, -450, true /* accelerometer */);
+  SensorCar car(env, -450, true /* accelerometer */);
   car.SpeedUpAndBrake();
   double const stoppedEast = East(env.Last().m_position);
 
@@ -3044,15 +2781,15 @@ UNIT_TEST(NoGps_Engine_CarDrivingFastDoesNotDriveBack)
   TestAlmostEqualAbs(East(env.Last().m_position), car.East(), 5);
 }
 
-UNIT_TEST(NoGps_Engine_BoxTurnedAroundDoesNotDriveEveryStartBack)
+UNIT_TEST(NoGps_Engine_SourceTurnedAroundDoesNotDriveEveryStartBack)
 {
   PieceRoads roads({{-2000, 0, 3000, 0}}, {});
   Env env(true /* inertial */, &roads);
   MarkCar(env, -450);
-  BoxCar car(env, -450, true /* accelerometer */);
+  SensorCar car(env, -450, true /* accelerometer */);
   car.SpeedUpAndBrake();
 
-  // The box is put in turned by 180 degrees: its accelerometer feels every start forward as a start backward.
+  // The source is put in turned by 180 degrees: its accelerometer feels every start forward as a start backward.
   car.m_accelSign = -1;
   int back = 0;
   for (int i = 0; i < 4; ++i)
@@ -3076,52 +2813,12 @@ UNIT_TEST(NoGps_Engine_BoxTurnedAroundDoesNotDriveEveryStartBack)
   TestAlmostEqualAbs(East(env.Last().m_position), car.East(), 15);
 }
 
-UNIT_TEST(NoGps_Engine_BoxCalibrationForgetsAccelerometer)
-{
-  // The trip line tells "boxacc=<correlation>/-" while the box accelerometer is not used.
-  auto const accelUsed = [](Env & env)
-  {
-    std::string const line = env.m_engine.GetTripLine();
-    auto const at = line.find(" boxacc=");
-    TEST(at != std::string::npos, (line));
-    return line[line.find('/', at) + 1] != '-';
-  };
-  PieceRoads roads({{-2000, 0, 3000, 0}}, {});
-  Env env(true /* inertial */, &roads);
-  MarkCar(env, -450);
-  BoxCar car(env, -450, true /* accelerometer */);
-  car.SpeedUpAndBrake();
-  TEST(accelUsed(env), ());
-
-  // The box is put in turned around and calibrated: the direction learned before is forgotten.
-  env.m_engine.Calibrate();
-  TEST(!accelUsed(env), ());
-  car.m_accelSign = -1;
-  car.Drive(3, 1, 0);
-  TEST(env.m_engine.GetTripLine().find(" back=0") != std::string::npos, (env.m_engine.GetTripLine()));
-  car.Drive(3, -1, 0);
-  car.Drive(3, 0, 0);
-  TestAlmostEqualAbs(East(env.Last().m_position), car.East(), 5);
-
-  // It is learned anew, the right way.
-  car.SpeedUpAndBrake();
-  TEST(accelUsed(env), ());
-  double const stoppedEast = East(env.Last().m_position);
-  car.Drive(2, -1, 0);
-  car.Drive(2, 0, 0);
-  TEST(env.m_engine.GetTripLine().find(" back=1") != std::string::npos, (env.m_engine.GetTripLine()));
-  car.Drive(2, 0, 0);
-  car.Drive(2, 1, 0);
-  car.Drive(3, 0, 0);
-  TestAlmostEqualAbs(East(env.Last().m_position), stoppedEast - 12, 3);
-}
-
 UNIT_TEST(NoGps_Engine_InertialDrivingBackIsNotShownBetweenGpsPositions)
 {
   PieceRoads roads({{-2000, 0, 3000, 0}}, {});
   Env env(true /* inertial */, &roads);
   MarkCar(env, -450);
-  BoxCar car(env, -450, true /* accelerometer */);
+  SensorCar car(env, -450, true /* accelerometer */);
   car.SpeedUpAndBrake();
   env.m_engine.SetManualMode(false);
 
@@ -3148,7 +2845,7 @@ UNIT_TEST(NoGps_Engine_CarStartingWithJerkBackDrivesForward)
   PieceRoads roads({{-2000, 0, 3000, 0}}, {});
   Env env(true /* inertial */, &roads);
   MarkCar(env, -450);
-  BoxCar car(env, -450, true /* accelerometer */);
+  SensorCar car(env, -450, true /* accelerometer */);
   car.SpeedUpAndBrake();
   double const stoppedEast = East(env.Last().m_position);
 
@@ -3173,7 +2870,7 @@ UNIT_TEST(NoGps_Engine_CarDrivingBackAfterShortStopIsFollowed)
   PieceRoads roads({{-2000, 0, 3000, 0}}, {});
   Env env(true /* inertial */, &roads);
   MarkCar(env, -450);
-  BoxCar car(env, -450, true /* accelerometer */);
+  SensorCar car(env, -450, true /* accelerometer */);
   car.SpeedUpAndBrake();
 
   // The car parks: 6 m forward, a stop of a second, which is too short to feel what the accelerometer feels
@@ -3196,7 +2893,7 @@ UNIT_TEST(NoGps_Engine_CarDrivingBackAfterStopReportedLateIsFollowed)
   PieceRoads roads({{-2000, 0, 3000, 0}}, {});
   Env env(true /* inertial */, &roads);
   MarkCar(env, -450);
-  BoxCar car(env, -450, true /* accelerometer */);
+  SensorCar car(env, -450, true /* accelerometer */);
   car.SpeedUpAndBrake();
 
   // The car drives 56 m and stops for 1.4 s: the stand before is too far to take what was felt there. The car reports
@@ -3221,7 +2918,7 @@ UNIT_TEST(NoGps_Engine_CarChangingGearAt1KmhIsFollowed)
   PieceRoads roads({{-2000, 0, 3000, 0}}, {});
   Env env(true /* inertial */, &roads);
   MarkCar(env, -450);
-  BoxCar car(env, -450, true /* accelerometer */);
+  SensorCar car(env, -450, true /* accelerometer */);
   car.SpeedUpAndBrake();
 
   // The car drives 6 m backward at 5 km/h.
@@ -3272,7 +2969,7 @@ UNIT_TEST(NoGps_Engine_AccelerometerIsNotLearnedFromManeuvers)
   PieceRoads roads({{-2000, 0, 3000, 0}}, {});
   Env env(true /* inertial */, &roads);
   MarkCar(env, -450);
-  BoxCar car(env, -450, true /* accelerometer */);
+  SensorCar car(env, -450, true /* accelerometer */);
   car.SpeedUpAndBrake();
 
   // The car backs down a slope that begins where it stood: the accelerometer feels a start forward.
@@ -3411,7 +3108,7 @@ UNIT_TEST(NoGps_Engine_DisabledGpsIsIgnored)
   TEST(env.m_engine.GetStatus().m_workingGpsAccuracyM, ());
 }
 
-UNIT_TEST(NoGps_Engine_ForgettingTheBoxReturnsGps)
+UNIT_TEST(NoGps_Engine_TurningInertialOffReturnsGps)
 {
   Env env(true /* inertial */);
   env.m_engine.SetGpsDisabled(true);
@@ -3421,29 +3118,23 @@ UNIT_TEST(NoGps_Engine_ForgettingTheBoxReturnsGps)
   TEST(!env.m_delegate.m_positions.empty(), ());
 }
 
-UNIT_TEST(NoGps_Engine_SavesSearchedBoxOnceHeard)
+UNIT_TEST(NoGps_Engine_InertialNavigationTurnedOnIsSaved)
 {
   Env env(false /* inertial */);
   env.m_engine.SetInertialNavigationEnabled(true);
   TEST(env.m_engine.GetStatus().m_inertialEnabled, ());
-  // The app closed now starts without a box.
-  TEST(!env.m_storage.IsInertialEnabled(), ());
-
-  env.ConnectBox();
-  TEST(!env.m_storage.IsInertialEnabled(), ());
-  env.Drive(100, 0, 0);
+  // The app closed now starts with it.
   TEST(env.m_storage.IsInertialEnabled(), ());
 }
 
-UNIT_TEST(NoGps_Engine_BoxSetUpAtMarkDrivesFromIt)
+UNIT_TEST(NoGps_Engine_InertialTurnedOnAtMarkDrivesFromIt)
 {
-  // The car is marked before the box is set up, no GPS comes.
+  // The car is marked before the inertial navigation is turned on, no GPS comes.
   Env env(false /* inertial */);
   env.m_engine.SetManualMode(true);
   TEST(env.m_engine.PlaceMarkByTap(At(60, 3)), ());
 
   env.m_engine.SetInertialNavigationEnabled(true);
-  env.ConnectBox();
   env.Drive(500, 0, 0);
   env.Drive(3000, 36, 0);
   TEST_EQUAL(env.m_engine.GetStatus().m_source, PositionSource::Inertial, ());
@@ -3451,7 +3142,7 @@ UNIT_TEST(NoGps_Engine_BoxSetUpAtMarkDrivesFromIt)
   TEST_GREATER(East(env.Last().m_position), 85, ());
 }
 
-UNIT_TEST(NoGps_Engine_SearchedBoxIsForgotten)
+UNIT_TEST(NoGps_Engine_InertialTurnedOffIsForgotten)
 {
   Env env(false /* inertial */);
   env.m_engine.SetInertialNavigationEnabled(true);
@@ -3582,7 +3273,7 @@ UNIT_TEST(NoGps_LastGoodGpsAge)
 UNIT_TEST(NoGps_Engine_InertialContinuesWhenGpsIsLost)
 {
   Env env(true /* inertial */);
-  // GPS gives the position and the heading while the box tells the speed.
+  // GPS gives the position and the heading while the source tells the speed.
   for (int i = 0; i < 5; ++i)
   {
     env.Drive(1000, 36, 0);
@@ -3602,14 +3293,14 @@ UNIT_TEST(NoGps_Engine_InertialContinuesWhenGpsIsLost)
 int64_t constexpr kGpsClockAheadMs = 3000;
 int64_t constexpr kGpsDelayMs = 100;
 
-// GPS positions once a second going east along the street at 10 m/s, from 0 m: the car drives by the box too if
-// |box|. \returns the last one.
-Fix DriveWithGps(Env & env, int seconds, bool box)
+// GPS positions once a second going east along the street at 10 m/s, from 0 m: the car drives by the source too if
+// |source|. \returns the last one.
+Fix DriveWithGps(Env & env, int seconds, bool source)
 {
   Fix gps;
   for (int i = 0; i < seconds; ++i)
   {
-    if (box)
+    if (source)
       env.Drive(1000, 36, 0);
     else
       env.m_clock.Advance(1000);
@@ -3625,7 +3316,7 @@ Fix DriveWithGps(Env & env, int seconds, bool box)
 UNIT_TEST(NoGps_Engine_InertialMovesMarkBetweenGpsPositions)
 {
   Env env(true /* inertial */);
-  Fix const gps = DriveWithGps(env, 3, true /* box */);
+  Fix const gps = DriveWithGps(env, 3, true /* source */);
 
   // GPS gives a position once a second, the map would move the mark in jumps: the inertial navigation moves it on
   // from the GPS position since it came every 200 ms, by the clock of GPS.
@@ -3673,7 +3364,7 @@ UNIT_TEST(NoGps_Engine_InertialMovesMarkUntilGpsIsLost)
   for (bool switchedOff : {false, true})
   {
     Env env(true /* inertial */);
-    DriveWithGps(env, 3, true /* box */);
+    DriveWithGps(env, 3, true /* source */);
     env.Drive(200, 36, 0);
     // GPS is lost, or switched off in the sensors sheet: the mark doesn't stand waiting for the manual mode, and
     // doesn't jump when it comes.
@@ -3695,7 +3386,7 @@ UNIT_TEST(NoGps_Engine_GpsAloneIsShownAsItComes)
 {
   // Without the inertial navigation the map moves the mark between GPS positions, see extrapolation::Extrapolator.
   Env env(false /* inertial */);
-  DriveWithGps(env, 3, false /* box */);
+  DriveWithGps(env, 3, false /* source */);
   size_t const shown = env.m_delegate.m_positions.size();
   env.m_clock.Advance(900);
   TEST_EQUAL(env.m_delegate.m_positions.size(), shown, ());
@@ -3724,7 +3415,7 @@ UNIT_TEST(NoGps_Engine_CarOffRoadsFollowedOnRouteBetweenGpsPositions)
 UNIT_TEST(NoGps_Engine_SameGpsPositionIsShownOnce)
 {
   Env env(true /* inertial */);
-  Fix const gps = DriveWithGps(env, 3, true /* box */);
+  Fix const gps = DriveWithGps(env, 3, true /* source */);
   int64_t const cameMs = env.m_clock.NowMs();
   // Android gives the position again, mixed with the network: a bit more accurate, sometimes a few meters off.
   size_t const shown = env.m_delegate.m_positions.size();
@@ -3751,7 +3442,7 @@ UNIT_TEST(NoGps_Engine_SameGpsPositionIsShownOnce)
 UNIT_TEST(NoGps_Engine_CopyOfRejectedGpsPositionIsTaken)
 {
   Env env(true /* inertial */);
-  DriveWithGps(env, 3, true /* box */);
+  DriveWithGps(env, 3, true /* source */);
   // The satellites alone put the car between the streets for seconds, their mix with the network keeps it on its
   // street.
   for (int i = 0; i <= Engine::kOffRoadGpsCount; ++i)
@@ -3770,8 +3461,8 @@ UNIT_TEST(NoGps_Engine_CopyOfRejectedGpsPositionIsTaken)
 }
 
 // The car speeds up to 54 km/h in 10 s, drives 5 s, brakes in 10 s and stands 5 s, again and again, going east
-// along the street. The box reports the car speed 1.2 s late. Returns how far the calculated position was from the
-// car at most 1.5-3 s after the car started to speed up or to brake, when the box has been learned.
+// along the street. The source reports the car speed 1.2 s late. Returns how far the calculated position was from the
+// car at most 1.5-3 s after the car started to speed up or to brake, when the source has been learned.
 double DriveWithLateSpeed(bool accelerometer)
 {
   double constexpr kLagSec = 1.2;
@@ -3784,8 +3475,6 @@ double DriveWithLateSpeed(bool accelerometer)
 
   Env env(true /* inertial */);
   MarkCar(env, -450);
-  int64_t seq = 1000;
-  int64_t boxTimeMs = 200'000;
   double speed = 0;
   double east = -450;
   // The speeds of the car of the last seconds.
@@ -3802,21 +3491,14 @@ double DriveWithLateSpeed(bool accelerometer)
     speeds.pop_front();
 
     env.m_clock.Advance(20);
-    boxTimeMs += 20;
-    char body[160];
+    RecordedMotion::Part part;
+    part.m_speedKmh = reportedKmh;
+    part.m_dtSec = 0.02;
+    // The sensor looks forward with its first horizontal axis, a little of the gravity is left in the others.
     if (accelerometer)
-    {
-      // The box looks forward with its first horizontal axis, a little of the gravity is left in the others.
-      std::snprintf(body, sizeof(body), "NGD,1,%lld,%lld,0,0,0,%d,0,%X,%d,50,-60,100", static_cast<long long>(++seq),
-                    static_cast<long long>(boxTimeMs), reportedKmh, kCalibratedFlags, static_cast<int>(a * 1000));
-    }
-    else
-    {
-      std::snprintf(body, sizeof(body), "NGD,1,%lld,%lld,0,0,0,%d,0,%X", static_cast<long long>(++seq),
-                    static_cast<long long>(boxTimeMs), reportedKmh, kCalibratedFlags);
-    }
+      part.m_accel = {{std::lround(a * 1000) / 1000.0, 0.05, -0.06}};
     size_t const positions = env.m_delegate.m_positions.size();
-    env.m_engine.OnEsp32BleBytes(BoxLine(body));
+    env.OnPart(part);
     // The third and the fourth time the car speeds up and brakes.
     double const inCycle = std::fmod(t, kCycleSec);
     bool const changing = (inCycle >= 1.5 && inCycle < 3) || (inCycle >= 16.5 && inCycle < 18);
@@ -3828,12 +3510,12 @@ double DriveWithLateSpeed(bool accelerometer)
   return maxError;
 }
 
-UNIT_TEST(NoGps_Engine_BoxAccelerometerTellsSpeedBeforeCar)
+UNIT_TEST(NoGps_Engine_SourceAccelerometerTellsSpeedBeforeCar)
 {
   // The car reports the new speed late. The distance it has driven meanwhile is added when it does, so the
   // position is right in the end, but it is behind while the car speeds up and ahead while it brakes.
   double const bySpeed = DriveWithLateSpeed(false /* accelerometer */);
-  // The accelerometer of the box feels the change at once.
+  // The accelerometer of the source feels the change at once.
   double const byAccel = DriveWithLateSpeed(true /* accelerometer */);
   LOG(LWARNING, ("The largest error by the car speed", bySpeed, "m, with the accelerometer", byAccel, "m"));
   TEST_GREATER(bySpeed, 0.8, ());
