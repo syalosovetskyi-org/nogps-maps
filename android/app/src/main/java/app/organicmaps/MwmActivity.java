@@ -3,6 +3,7 @@ package app.organicmaps;
 import static android.Manifest.permission.ACCESS_COARSE_LOCATION;
 import static android.Manifest.permission.ACCESS_FINE_LOCATION;
 import static android.Manifest.permission.POST_NOTIFICATIONS;
+import static android.Manifest.permission.BLUETOOTH_CONNECT;
 import static android.content.pm.PackageManager.PERMISSION_GRANTED;
 import static app.organicmaps.sdk.location.LocationState.FOLLOW;
 import static app.organicmaps.sdk.location.LocationState.FOLLOW_AND_ROTATE;
@@ -67,6 +68,7 @@ import app.organicmaps.location.TrackRecordingService;
 import app.organicmaps.maplayer.MapButtonsController;
 import app.organicmaps.maplayer.MapButtonsViewModel;
 import app.organicmaps.maplayer.ToggleMapLayerFragment;
+import app.organicmaps.nogps.CarSetup;
 import app.organicmaps.nogps.SensorsBottomSheet;
 import app.organicmaps.routing.NavigationController;
 import app.organicmaps.routing.NavigationService;
@@ -193,6 +195,9 @@ public class MwmActivity extends BaseMwmFragmentActivity
 
   @SuppressWarnings("NotNullFieldNotInitialized")
   private ActivityResultLauncher<String> mPostNotificationPermissionRequest;
+  private ActivityResultLauncher<String> mCarBluetoothPermissionRequest;
+  // Once for a start of the app.
+  private static boolean sCarSetupRun;
 
   @SuppressWarnings("NotNullFieldNotInitialized")
   private ActivityResultLauncher<IntentSenderRequest> mLocationResolutionRequest;
@@ -576,6 +581,8 @@ public class MwmActivity extends BaseMwmFragmentActivity
                                                            this::onLocationResolutionResult);
     mPostNotificationPermissionRequest = registerForActivityResult(new ActivityResultContracts.RequestPermission(),
                                                                    this::onPostNotificationPermissionResult);
+    mCarBluetoothPermissionRequest = registerForActivityResult(
+        new ActivityResultContracts.RequestPermission(), granted -> onCarSetup(CarSetup.run(this, granted)));
     mPowerSaveSettings =
         registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), this::onPowerSaveResult);
 
@@ -1705,6 +1712,42 @@ public class MwmActivity extends BaseMwmFragmentActivity
       dismissLocationErrorDialog();
       mLocationPermissionRequest.launch(new String[] {ACCESS_COARSE_LOCATION, ACCESS_FINE_LOCATION});
       return;
+    }
+    // The head unit build sets itself up after the location is settled: only one request is shown at a time.
+    if (BuildConfig.NOGPS_CAR)
+      setUpCar();
+  }
+
+  /**
+   * The head unit build: "Phone + ELM327" with the paired adapter, asked for Bluetooth access first.
+   */
+  private void setUpCar()
+  {
+    if (sCarSetupRun)
+      return;
+    sCarSetupRun = true;
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+        && ActivityCompat.checkSelfPermission(this, BLUETOOTH_CONNECT) != PERMISSION_GRANTED)
+    {
+      Logger.i(TAG, "Requesting BLUETOOTH_CONNECT permission for the OBD adapter");
+      mCarBluetoothPermissionRequest.launch(BLUETOOTH_CONNECT);
+      return;
+    }
+    onCarSetup(CarSetup.run(this, true));
+  }
+
+  private void onCarSetup(@NonNull CarSetup.Result result)
+  {
+    switch (result)
+    {
+    case NO_PERMISSION -> Toast.makeText(this, R.string.nogps_bt_permission_denied, Toast.LENGTH_LONG).show();
+    case NO_ADAPTER, NO_BLUETOOTH ->
+    {
+      Toast.makeText(this, R.string.nogps_no_paired, Toast.LENGTH_LONG).show();
+      if (getSupportFragmentManager().findFragmentByTag(SensorsBottomSheet.TAG) == null)
+        new SensorsBottomSheet().show(getSupportFragmentManager(), SensorsBottomSheet.TAG);
+    }
+    case ALREADY_CHOSEN, CHOSEN -> {}
     }
   }
 

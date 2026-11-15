@@ -71,6 +71,8 @@ android {
     buildConfigField 'boolean', 'MAP_EDITING', 'false'
     // Should be customized in flavors.
     buildConfigField 'String', 'REVIEW_URL', '""'
+    // The head unit build: the car speed comes from a plain ELM327 adapter, not from the sensor box.
+    buildConfigField 'boolean', 'NOGPS_CAR', 'false'
     resourceConfigurations += [project.ext.supportedLocalizations]
 
     base.archivesName = rootProject.name.replaceAll('\\s', '') + '-' + defaultConfig.versionCode
@@ -106,6 +108,16 @@ android {
       applicationIdSuffix '.web'
       versionName = android.defaultConfig.versionName + '-Web'
       buildConfigField 'String', 'SUPPORT_MAIL', '"most05062014@gmail.com"'
+    }
+
+    // For a car head unit (serg/tasks#2989): installs next to the web build, starts with
+    // "Phone + ELM327", the inertial navigation on and the paired OBD adapter chosen by itself.
+    car {
+      dimension 'default'
+      applicationIdSuffix '.car'
+      versionName = android.defaultConfig.versionName + '-Car'
+      buildConfigField 'String', 'SUPPORT_MAIL', '"most05062014@gmail.com"'
+      buildConfigField 'boolean', 'NOGPS_CAR', 'true'
     }
 
     fdroid {
@@ -246,6 +258,8 @@ dependencies {
   googleImplementation project(':sdk:location:gms:google')
   huaweiImplementation project(':sdk:location:gms:google')
   fdroidImplementation project(':sdk:location:gms:foss')
+  // A head unit often has no Google Play services: the plain Android location.
+  carImplementation project(':sdk:location:gms:foss')
 
   // Wear OS phone-side seam (interface + registry + no-op); wear-protocol arrives transitively.
   // The Google publisher that plugs into it is declared in the afterEvaluate block above.
@@ -323,7 +337,8 @@ def allowedPermissions = [
     // app.organicmaps.(debug|beta|profileable)
     // app.organicmaps.web
     // app.organicmaps.web.(debug|beta|profileable)
-    ~/name='ua\.nogps\.maps(\.web)?(\.debug|\.beta|\.profileable)?\.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION'/
+    // ua.nogps.maps.car(.debug|...)
+    ~/name='ua\.nogps\.maps(\.web|\.car)?(\.debug|\.beta|\.profileable)?\.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION'/
 ]
 registerCheckApkPermissionsTasks(project, allowedPermissions)
 
