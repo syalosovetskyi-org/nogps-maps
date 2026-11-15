@@ -20,7 +20,10 @@ import android.util.TypedValue;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.Button;
 import android.widget.LinearLayout;
+import android.widget.RadioButton;
+import android.widget.RadioGroup;
 import android.widget.TextView;
 import android.widget.Toast;
 import androidx.activity.result.ActivityResultLauncher;
@@ -29,10 +32,12 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.widget.SwitchCompat;
 import androidx.core.content.ContextCompat;
+import app.organicmaps.BuildConfig;
 import app.organicmaps.R;
 import app.organicmaps.sdk.location.MockLocationShare;
 import app.organicmaps.sdk.location.NoGps;
 import app.organicmaps.sdk.util.log.Logger;
+import app.organicmaps.util.Utils;
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import java.util.ArrayList;
@@ -40,8 +45,11 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * The inertial navigation: its switch and the ELM327 adapter are shown at once, whatever the state, then the speed,
- * the gyroscope and GPS. Choosing the adapter turns the inertial navigation on.
+ * The inertial navigation: its switch and where the car movement comes from are shown at once, whatever the state:
+ * the NonGPS box (Bluetooth LE, with its own gyroscope) or the ELM327 adapter with the gyroscope of the device. Under
+ * the chosen one is its row: the state of the box with Connect or Set up, which opens the Box sheet, or the adapter
+ * with Choose. Without a gyroscope the adapter can't turn the car: its choice is disabled and tells why, the box is
+ * offered instead. Then the speed, the gyroscope and GPS. Choosing the adapter turns the inertial navigation on.
  */
 public class SensorsBottomSheet extends BottomSheetDialogFragment
 {
@@ -50,6 +58,7 @@ public class SensorsBottomSheet extends BottomSheetDialogFragment
   public static final String RESULT_CLOSED = TAG + ".closed";
   private static final long UPDATE_INTERVAL_MS = 500;
   private static final String STATE_SHARE_ASKED = "share_asked";
+  private static final String SHOP_URL = "https://non-gps.com";
 
   private final Handler mHandler = new Handler(Looper.getMainLooper());
   private final Runnable mUpdater = new Runnable() {
@@ -63,6 +72,14 @@ public class SensorsBottomSheet extends BottomSheetDialogFragment
 
   private final ActivityResultLauncher<String> mBluetoothPermissionLauncher =
       registerForActivityResult(new ActivityResultContracts.RequestPermission(), this::onBluetoothPermissionResult);
+  // The state of the box tells whether it is given, see boxStateText().
+  private final ActivityResultLauncher<String[]> mBoxBluetoothLauncher =
+      registerForActivityResult(new ActivityResultContracts.RequestMultiplePermissions(), result -> {
+        if (result.containsValue(false))
+          Logger.w(TAG, "Bluetooth for the box is not granted: " + result);
+      });
+  // Once for the sheet: the user may have refused.
+  private boolean mBoxBluetoothAsked;
   // What to do after the Bluetooth permission is granted.
   @Nullable
   private Runnable mAfterPermission;
@@ -71,7 +88,24 @@ public class SensorsBottomSheet extends BottomSheetDialogFragment
 
   private SwitchCompat mInertial;
   private View mDetails;
+  private boolean mGyroscope;
+  private View mNoGyro;
+  private RadioGroup mSource;
+  private RadioButton mSourceBox;
+  private RadioButton mSourceElm;
+  private View mSourceElmNoGyro;
+  private View mBoxRow;
+  private TextView mBox;
+  private Button mBoxOpen;
+  private View mBuy;
+  private View mAdapterRow;
   private TextView mAdapter;
+  private TextView mHint;
+  private View mFirmwareRow;
+  private TextView mFirmware;
+  private Button mFirmwareButton;
+  private TextView mCar;
+  private View mVoltageMismatch;
   private TextView mSpeed;
   private TextView mScale;
   private TextView mRoughSpeed;
@@ -113,12 +147,35 @@ public class SensorsBottomSheet extends BottomSheetDialogFragment
     final View view = inflater.inflate(R.layout.nogps_sensors_sheet, container, false);
     mInertial = view.findViewById(R.id.nogps_inertial);
     mInertial.setOnClickListener(v -> onInertialSwitched(mInertial.isChecked()));
-    // Without the gyroscope the car can't be turned: only the marks of the user move it.
-    final boolean gyroscope = hasGyroscope(requireContext());
-    view.findViewById(R.id.nogps_no_gyro).setVisibility(gyroscope ? View.GONE : View.VISIBLE);
+    // Without the gyroscope the device can't turn the car: the box can, it has its own.
+    mGyroscope = hasGyroscope(requireContext());
+    mNoGyro = view.findViewById(R.id.nogps_no_gyro);
     mDetails = view.findViewById(R.id.nogps_details);
+    mSource = view.findViewById(R.id.nogps_source);
+    mSourceBox = view.findViewById(R.id.nogps_source_box);
+    mSourceElm = view.findViewById(R.id.nogps_source_elm);
+    mSourceElmNoGyro = view.findViewById(R.id.nogps_source_elm_no_gyro);
+    mSourceElm.setEnabled(mGyroscope);
+    mSourceElmNoGyro.setVisibility(mGyroscope ? View.GONE : View.VISIBLE);
+    mSource.check(NoGps.getStatus().esp32Source ? R.id.nogps_source_box : R.id.nogps_source_elm);
+    // Set after check(): only the user's choice changes the source.
+    mSource.setOnCheckedChangeListener((group, checkedId) -> onSourceChosen(checkedId));
+    mBoxRow = view.findViewById(R.id.nogps_box_row);
+    mBox = view.findViewById(R.id.nogps_box);
+    mBoxOpen = view.findViewById(R.id.nogps_box_open);
+    mBoxOpen.setOnClickListener(v -> openBoxSheet());
+    mBuy = view.findViewById(R.id.nogps_buy);
+    mBuy.setOnClickListener(v -> Utils.openUrl(requireContext(), SHOP_URL));
+    mAdapterRow = view.findViewById(R.id.nogps_adapter_row);
     mAdapter = view.findViewById(R.id.nogps_adapter);
     view.findViewById(R.id.nogps_choose_adapter).setOnClickListener(v -> withBluetoothPermission(this::chooseAdapter));
+    mHint = view.findViewById(R.id.nogps_hint);
+    mFirmwareRow = view.findViewById(R.id.nogps_firmware_row);
+    mFirmware = view.findViewById(R.id.nogps_firmware);
+    mFirmwareButton = view.findViewById(R.id.nogps_firmware_button);
+    mFirmwareButton.setOnClickListener(v -> onFirmwareButton());
+    mCar = view.findViewById(R.id.nogps_car);
+    mVoltageMismatch = view.findViewById(R.id.nogps_voltage_mismatch);
     mSpeed = view.findViewById(R.id.nogps_speed);
     mScale = view.findViewById(R.id.nogps_scale);
     mRoughSpeed = view.findViewById(R.id.nogps_rough_speed);
@@ -135,7 +192,6 @@ public class SensorsBottomSheet extends BottomSheetDialogFragment
     mReadiness = view.findViewById(R.id.nogps_readiness);
     mCalibrate = view.findViewById(R.id.nogps_calibrate);
     mCalibrate.setOnClickListener(v -> NoGps.nativeCalibrate());
-    mCalibrate.setEnabled(gyroscope);
 
     mGpsView = view.findViewById(R.id.nogps_gps_view);
     mGpsUse = view.findViewById(R.id.nogps_gps_use);
@@ -165,6 +221,9 @@ public class SensorsBottomSheet extends BottomSheetDialogFragment
   {
     super.onStart();
     mHandler.post(mUpdater);
+    final NoGps.Status status = NoGps.getStatus();
+    if (status.inertialEnabled && status.esp32Source)
+      askBoxBluetooth();
   }
 
   @Override
@@ -177,14 +236,76 @@ public class SensorsBottomSheet extends BottomSheetDialogFragment
 
   /**
    * Turned on without an adapter, the inertial navigation asks for one: nothing tells the speed of the car otherwise.
+   * The box is searched over Bluetooth LE, it needs the permission for it.
    */
   private void onInertialSwitched(boolean enabled)
   {
     Logger.i(TAG, "The inertial navigation is turned " + (enabled ? "on" : "off") + " by the user");
     NoGps.nativeSetInertialNavigationEnabled(enabled);
-    if (enabled && NoGps.getStatus().elm327Address.isEmpty())
+    final NoGps.Status status = NoGps.getStatus();
+    if (enabled && status.esp32Source)
+      askBoxBluetooth();
+    else if (enabled && status.elm327Address.isEmpty())
       withBluetoothPermission(this::chooseAdapter);
     update();
+  }
+
+  /**
+   * The user picks where the car movement comes from. The box is set up in its own sheet, the adapter is chosen at
+   * once if there is none.
+   */
+  private void onSourceChosen(int radioId)
+  {
+    final boolean box = radioId == R.id.nogps_source_box;
+    if (box == NoGps.getStatus().esp32Source)
+      return;
+    Logger.i(TAG, "The source is chosen by the user: " + (box ? "the box" : "ELM327 + the gyroscope of the device"));
+    if (box)
+    {
+      NoGps.nativeSetEsp32Source(true);
+      if (NoGps.getStatus().inertialEnabled)
+        askBoxBluetooth();
+      update();
+      return;
+    }
+    NoGps.nativeSetEsp32Source(false);
+    if (NoGps.getStatus().inertialEnabled && NoGps.getStatus().elm327Address.isEmpty())
+      withBluetoothPermission(this::chooseAdapter);
+    update();
+  }
+
+  /**
+   * The Box sheet connects the box (it is searched step by step there), shows what it tells and updates its firmware.
+   */
+  private void openBoxSheet()
+  {
+    if (!NoGps.getStatus().esp32Source)
+      NoGps.nativeSetEsp32Source(true);
+    if (getParentFragmentManager().findFragmentByTag(BoxBottomSheet.TAG) == null)
+      new BoxBottomSheet().show(getParentFragmentManager(), BoxBottomSheet.TAG);
+  }
+
+  /**
+   * The sensor box is searched and connected over Bluetooth LE: before Android 12 a scan needs the location. Without
+   * the permission the state of the box tells so.
+   */
+  private void askBoxBluetooth()
+  {
+    if (mBoxBluetoothAsked)
+      return;
+    final String[] permissions =
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+            ? new String[] {Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT}
+            : new String[] {Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION};
+    for (String permission : permissions)
+    {
+      if (ContextCompat.checkSelfPermission(requireContext(), permission) == PackageManager.PERMISSION_GRANTED)
+        continue;
+      mBoxBluetoothAsked = true;
+      Logger.i(TAG, "Requesting " + String.join(", ", permissions) + " for the box");
+      mBoxBluetoothLauncher.launch(permissions);
+      return;
+    }
   }
 
   /**
@@ -303,18 +424,19 @@ public class SensorsBottomSheet extends BottomSheetDialogFragment
     mDetails.setVisibility(status.inertialEnabled ? View.VISIBLE : View.GONE);
 
     final boolean started = status.inertialStarted;
-    String adapter = adapterName(status);
-    if (started)
-      adapter += " · " + adapterStateText(requireContext(), status);
-    mAdapter.setText(getString(R.string.nogps_sensors_adapter, adapter));
+    final boolean esp32 = status.esp32Source;
+    updateSource(status);
 
     updateGps(status);
     if (!status.inertialEnabled)
       return;
 
+    updateFirmware(started && esp32 ? status : null);
+
     final int speed = started ? status.speedKmh : -1;
     mSpeed.setText(getString(R.string.nogps_sensors_speed, speed >= 0 ? getString(R.string.nogps_speed_kmh, speed)
                                                                       : getString(R.string.nogps_unknown)));
+    updateCar(started && esp32 && status.hasCarInfo ? status : null, speed);
 
     String scale = getString(
         R.string.nogps_sensors_scale,
@@ -339,14 +461,28 @@ public class SensorsBottomSheet extends BottomSheetDialogFragment
     }
 
     final NoGps.CalibrationState calibration = started ? status.getCalibration() : NoGps.CalibrationState.NONE;
-    final String gyro = switch (calibration)
+    mCalibrate.setText(esp32 ? R.string.nogps_sensors_calibrate_box : R.string.nogps_sensors_calibrate);
+    // The box calibrates itself: there is nobody to calibrate while it is out of reach. The phone has nothing to
+    // calibrate without a gyroscope.
+    mCalibrate.setEnabled(esp32 ? status.getBleState() == NoGps.BleState.CONNECTED : mGyroscope);
+    if (esp32)
     {
-      case NONE -> getString(R.string.nogps_gyro_none);
-      case CALIBRATING -> getString(R.string.nogps_gyro_calibrating, status.calibrationProgress);
-      case DONE -> getString(R.string.nogps_gyro_done);
-      case FAILED_MOVING -> getString(R.string.nogps_gyro_failed);
-    };
-    mGyro.setText(getString(R.string.nogps_sensors_gyro, gyro));
+      mGyro.setText(
+          getString(R.string.nogps_sensors_box_sensors, boxCalibrationText(requireContext(), status, calibration)));
+    }
+    else
+    {
+      final String gyro = switch (calibration)
+      {
+        case NONE -> getString(R.string.nogps_gyro_none);
+        case CALIBRATING -> getString(R.string.nogps_gyro_calibrating, status.calibrationProgress);
+        case DONE -> getString(R.string.nogps_gyro_done);
+        case FAILED_MOVING -> getString(R.string.nogps_gyro_failed);
+        case MOUNT_MOVED -> getString(R.string.nogps_gyro_mount_moved);
+        case LINK_LOST -> getString(R.string.nogps_box_calibration_link_lost);
+      };
+      mGyro.setText(getString(R.string.nogps_sensors_gyro, gyro));
+    }
 
     if (!started)
     {
@@ -357,7 +493,7 @@ public class SensorsBottomSheet extends BottomSheetDialogFragment
     if (speed < 0)
       missing.add(getString(R.string.nogps_missing_speed));
     if (calibration != NoGps.CalibrationState.DONE)
-      missing.add(getString(R.string.nogps_missing_gyro));
+      missing.add(getString(esp32 ? R.string.nogps_missing_box_calibration : R.string.nogps_missing_gyro));
     if (!status.hasInertialPosition)
       missing.add(getString(R.string.nogps_missing_position));
     if (missing.isEmpty())
@@ -373,13 +509,167 @@ public class SensorsBottomSheet extends BottomSheetDialogFragment
   }
 
   /**
+   * Where the car movement comes from: both choices, and the row of the chosen one under it.
+   */
+  private void updateSource(@NonNull NoGps.Status status)
+  {
+    final boolean esp32 = status.esp32Source;
+    final int checked = esp32 ? R.id.nogps_source_box : R.id.nogps_source_elm;
+    // Also changed by the Box sheet, or by the head unit setup.
+    if (mSource.getCheckedRadioButtonId() != checked && !mSourceBox.isPressed() && !mSourceElm.isPressed())
+      mSource.check(checked);
+    // The adapter can't turn the car without a gyroscope: it is said once, at the top, while it is the source.
+    mNoGyro.setVisibility(!mGyroscope && !esp32 ? View.VISIBLE : View.GONE);
+    mHint.setText(esp32 ? R.string.nogps_sensors_hint_box : R.string.nogps_sensors_hint);
+    mBoxRow.setVisibility(esp32 ? View.VISIBLE : View.GONE);
+    mAdapterRow.setVisibility(esp32 ? View.GONE : View.VISIBLE);
+    final boolean heard = status.inertialEnabled && BoxBottomSheet.isBoxHeard(status);
+    // Under the box choice: the shop is a link, the choices stay the main thing.
+    mBuy.setVisibility(esp32 && !heard ? View.VISIBLE : View.GONE);
+    if (esp32)
+    {
+      String box = BoxBottomSheet.boxName(status);
+      if (status.inertialStarted)
+        box += " · " + boxStateText(requireContext(), status);
+      else if (!status.inertialEnabled)
+        box += " · " + getString(R.string.nogps_box_not_connected);
+      mBox.setText(getString(R.string.nogps_sensors_box, box));
+      mBoxOpen.setText(heard ? R.string.nogps_box_settings : R.string.nogps_box_connect_short);
+      return;
+    }
+    String adapter = adapterName(status);
+    if (status.inertialStarted)
+      adapter += " · " + adapterStateText(requireContext(), status);
+    mAdapter.setText(getString(R.string.nogps_sensors_adapter, adapter));
+  }
+
+  /**
+   * Shows the firmware of the sensor box, the button to send it the one of the application, or how that goes.
+   * @param status null if the box is not used.
+   */
+  private void updateFirmware(@Nullable NoGps.Status status)
+  {
+    final NoGps.FirmwareUpdate update = status != null ? status.getFirmwareUpdate() : NoGps.FirmwareUpdate.NONE;
+    final boolean updating = isUpdating(update);
+    if (status == null || (!updating && status.boxFirmware.isEmpty()))
+    {
+      mFirmwareRow.setVisibility(View.GONE);
+      return;
+    }
+    mFirmwareRow.setVisibility(View.VISIBLE);
+    mFirmware.setText(getString(R.string.nogps_sensors_firmware, firmwareText(requireContext(), status)));
+
+    final boolean install = canInstallFirmware(status);
+    // A box that has taken the firmware restarts by itself.
+    final boolean cancel = updating && update != NoGps.FirmwareUpdate.RESTARTING;
+    mFirmwareButton.setVisibility(install || cancel ? View.VISIBLE : View.GONE);
+    if (cancel)
+      mFirmwareButton.setText(R.string.cancel);
+    else if (install)
+      mFirmwareButton.setText(getString(R.string.nogps_firmware_install, status.bundledFirmware));
+  }
+
+  /**
+   * The firmware of the box, or how its update goes. Also shown by the Box sheet.
+   */
+  @NonNull
+  static String firmwareText(@NonNull Context context, @NonNull NoGps.Status status)
+  {
+    return switch (status.getFirmwareUpdate())
+    {
+      case STARTING -> context.getString(R.string.nogps_firmware_starting);
+      case SENDING -> context.getString(R.string.nogps_firmware_sending, status.firmwareUpdateProgress);
+      case VERIFYING -> context.getString(R.string.nogps_firmware_verifying);
+      case RESTARTING -> context.getString(R.string.nogps_firmware_restarting);
+      case NONE, DONE, FAILED -> status.boxFirmware;
+    };
+  }
+
+  /**
+   * The box works with the firmware the application is tested with: there is nothing to install. A debug build sends
+   * it again to try the update itself.
+   */
+  static boolean canInstallFirmware(@NonNull NoGps.Status status)
+  {
+    return !isUpdating(status.getFirmwareUpdate()) && !status.bundledFirmware.isEmpty()
+ && (BuildConfig.DEBUG || !status.bundledFirmware.equals(status.boxFirmware));
+  }
+
+  private static boolean isUpdating(@NonNull NoGps.FirmwareUpdate update)
+  {
+    return update == NoGps.FirmwareUpdate.STARTING || update == NoGps.FirmwareUpdate.SENDING
+ || update == NoGps.FirmwareUpdate.VERIFYING || update == NoGps.FirmwareUpdate.RESTARTING;
+  }
+
+  private void onFirmwareButton()
+  {
+    if (isUpdating(NoGps.getStatus().getFirmwareUpdate()))
+      NoGps.nativeCancelFirmwareUpdate();
+    else
+      NoGps.nativeStartFirmwareUpdate();
+    update();
+  }
+
+  /**
+   * Shows what the sensor box tells about the car: the engine and the voltage measured by the box and by its OBD chip.
+   * @param car the status with the car data, null if the box tells nothing.
+   */
+  private void updateCar(@Nullable NoGps.Status car, int speedKmh)
+  {
+    mCar.setVisibility(car != null ? View.VISIBLE : View.GONE);
+    mVoltageMismatch.setVisibility(car != null && car.voltageMismatch ? View.VISIBLE : View.GONE);
+    if (car == null)
+      return;
+
+    // The box measures its own voltage all the time and asks the car for the rest only while it stands, not to
+    // delay the speed.
+    final String unknown = getString(speedKmh > 0 ? R.string.nogps_not_while_driving : R.string.nogps_unknown);
+    final String engine = getString(car.engineRunning < 0   ? R.string.nogps_unknown
+                                    : car.engineRunning > 0 ? R.string.nogps_engine_running
+                                                            : R.string.nogps_engine_stopped);
+    final String rpm = car.rpm >= 0 ? getString(R.string.nogps_rpm, car.rpm) : unknown;
+    final String boxVolts = car.boxMillivolts >= 0 ? formatVolts(car.boxMillivolts) : getString(R.string.nogps_unknown);
+    final String elmVolts = car.elmMillivolts >= 0 ? formatVolts(car.elmMillivolts) : unknown;
+    final String ecuVolts = car.ecuMillivolts >= 0 ? formatVolts(car.ecuMillivolts) : unknown;
+    mCar.setText(getString(R.string.nogps_sensors_car, engine, rpm, boxVolts, elmVolts, ecuVolts));
+  }
+
+  @NonNull
+  private String formatVolts(int millivolts)
+  {
+    return getString(R.string.nogps_volts, String.format(Locale.US, "%.1f", millivolts / 1000.0));
+  }
+
+  /**
+   * Also shown by the Box sheet.
+   */
+  @NonNull
+  static String boxCalibrationText(@NonNull Context context, @NonNull NoGps.Status status,
+                                   @NonNull NoGps.CalibrationState calibration)
+  {
+    return switch (calibration)
+    {
+      case NONE -> context.getString(R.string.nogps_box_not_calibrated);
+      case CALIBRATING -> context.getString(R.string.nogps_box_calibrating, status.calibrationProgress);
+      // The box keeps its calibration, but it may stand in another way since it was plugged in.
+      case DONE ->
+        context.getString(status.boxCalibrationAdvised ? R.string.nogps_box_calibration_advised
+                                                       : R.string.nogps_box_calibrated);
+      case FAILED_MOVING -> context.getString(R.string.nogps_box_calibration_failed);
+      case MOUNT_MOVED -> context.getString(R.string.nogps_gyro_mount_moved);
+      case LINK_LOST -> context.getString(R.string.nogps_box_calibration_link_lost);
+    };
+  }
+
+  /**
    * What GPS is worth, if the car follows it, and the share of the position with other apps.
    */
   private void updateGps(@NonNull NoGps.Status status)
   {
     final Context context = requireContext();
     mGpsView.update(status);
-    // GPS is turned off for the car only while the adapter can drive it: nothing would move the mark otherwise.
+    // GPS is turned off for the car only while the adapter or the box can drive it: nothing would move the mark
+    // otherwise.
     final boolean canSwitch = status.gpsDisabled || isAdapterHeard(status);
     mGpsUse.setEnabled(canSwitch);
     if (!mGpsUse.isPressed())
@@ -402,7 +692,7 @@ public class SensorsBottomSheet extends BottomSheetDialogFragment
   }
 
   /**
-   * The adapter answers: the car is followed by it, or it tells why not.
+   * The adapter or the box answers: the car is followed by it, or it tells why not.
    */
   static boolean isAdapterHeard(@NonNull NoGps.Status status)
   {
@@ -476,7 +766,16 @@ public class SensorsBottomSheet extends BottomSheetDialogFragment
   }
 
   /**
-   * The state of the ELM327 adapter. Also told by the button of the bottom bar.
+   * The state of the source of the car movement, the box or the ELM327 adapter. Told by the button of the bottom bar.
+   */
+  @NonNull
+  public static String sourceStateText(@NonNull Context context, @NonNull NoGps.Status status)
+  {
+    return status.esp32Source ? boxStateText(context, status) : adapterStateText(context, status);
+  }
+
+  /**
+   * The state of the ELM327 adapter.
    */
   @NonNull
   public static String adapterStateText(@NonNull Context context, @NonNull NoGps.Status status)
@@ -484,11 +783,61 @@ public class SensorsBottomSheet extends BottomSheetDialogFragment
     return context.getString(switch (status.getSourceState())
     {
       case DISCONNECTED -> R.string.nogps_elm_disconnected;
-      case CONNECTING -> R.string.nogps_elm_connecting;
-      case NO_ADAPTER -> R.string.nogps_elm_no_adapter;
-      case NO_CAR_DATA -> R.string.nogps_elm_no_car;
+      case CONNECTING, OBD_CONNECTING -> R.string.nogps_elm_connecting;
+      case NO_ADAPTER, OBD_DISABLED -> R.string.nogps_elm_no_adapter;
+      case OBD_ERROR -> R.string.nogps_elm_error;
+      // The last ones are of the sensor box only.
+      case NO_CAR_DATA, BOX_SLEEPING, OBD_SLEEPING, UPDATING -> R.string.nogps_elm_no_car;
       case CONNECTED -> R.string.nogps_elm_connected;
     });
+  }
+
+  /**
+   * The state of the box. Also told by the Box sheet.
+   */
+  @NonNull
+  public static String boxStateText(@NonNull Context context, @NonNull NoGps.Status status)
+  {
+    // The phone keeps looking for a sleeping box.
+    if (status.getSourceState() == NoGps.SourceState.BOX_SLEEPING)
+      return context.getString(R.string.nogps_box_sleeping) + " · " + context.getString(boxSearchText(context, status));
+    return context.getString(switch (status.getSourceState())
+    {
+      case DISCONNECTED -> R.string.nogps_elm_disconnected;
+      case CONNECTING -> boxSearchText(context, status);
+      case NO_ADAPTER -> R.string.nogps_elm_no_adapter;
+      case OBD_DISABLED -> R.string.nogps_box_obd_disabled;
+      case OBD_CONNECTING -> R.string.nogps_box_obd_connecting;
+      case OBD_ERROR -> R.string.nogps_elm_error;
+      case NO_CAR_DATA -> R.string.nogps_elm_no_car;
+      case BOX_SLEEPING -> R.string.nogps_box_sleeping;
+      case OBD_SLEEPING -> R.string.nogps_box_obd_sleeping;
+      case CONNECTED -> R.string.nogps_elm_connected;
+      case UPDATING -> R.string.nogps_box_updating;
+    });
+  }
+
+  /**
+   * The box is not heard yet: what the phone does to reach it.
+   */
+  private static int boxSearchText(@NonNull Context context, @NonNull NoGps.Status status)
+  {
+    if (NoGps.isLocationOffForBox(context, status))
+      return R.string.nogps_box_step_location_off;
+    return switch (status.getBleState())
+    {
+      // Named as in the settings: Android before 12 finds Bluetooth devices with the location permission.
+      case NO_PERMISSION ->
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? R.string.nogps_box_bt_no_nearby
+                                                       : R.string.nogps_box_bt_no_location;
+      // OFF: the phone has no Bluetooth LE.
+      case OFF, DISABLED -> R.string.nogps_box_bt_disabled;
+      case SEARCHING -> R.string.nogps_box_bt_searching;
+      case PAIRING_CLOSED -> R.string.nogps_box_bt_pairing_closed;
+      case CONNECTING -> R.string.nogps_box_bt_connecting;
+      case PAIRING -> R.string.nogps_box_bt_pairing;
+      case CONNECTED -> R.string.nogps_box_bt_waiting;
+    };
   }
 
   @Override

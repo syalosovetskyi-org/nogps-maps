@@ -388,7 +388,7 @@ UNIT_TEST(NoGps_AccelSpeed_KeepsBetweenStarts)
   car.Drive(accel, 200);
   TEST(accel.IsUsable(), ());
 
-  // The application is started again: the sensor is where it was.
+  // The application is started again: the sensor box is where it was.
   AccelSpeed restored;
   TEST(restored.Deserialize(accel.Serialize()), ());
   TEST(restored.IsUsable(), ());
@@ -467,7 +467,7 @@ UNIT_TEST(NoGps_AccelSpeed_TurnedAroundSensorIsForgotten)
   auto const before = accel.GetDirection();
   TEST(before, ());
 
-  // The sensor is put in again turned by 180 degrees, the application isn't restarted.
+  // The box is put in again turned by 180 degrees, the application isn't restarted.
   for (auto & v : car.m_forward)
     v = -v;
   bool forgotten = false;

@@ -53,6 +53,12 @@ set(SRC
   nogps/elm327_session.hpp
   nogps/engine.cpp
   nogps/engine.hpp
+  nogps/esp32_protocol.cpp
+  nogps/esp32_protocol.hpp
+  nogps/esp32_source.cpp
+  nogps/esp32_source.hpp
+  nogps/esp32_update.cpp
+  nogps/esp32_update.hpp
   nogps/geo.cpp
   nogps/geo.hpp
   nogps/gps_return_detector.cpp
@@ -70,8 +76,6 @@ set(SRC
   nogps/path_matcher.hpp
   nogps/phone_motion.cpp
   nogps/phone_motion.hpp
-  nogps/recorded_motion.cpp
-  nogps/recorded_motion.hpp
   nogps/road_walker.cpp
   nogps/road_walker.hpp
   nogps/roads.hpp

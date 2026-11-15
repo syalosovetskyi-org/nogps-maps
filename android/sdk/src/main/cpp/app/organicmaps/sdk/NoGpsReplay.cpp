@@ -6,9 +6,9 @@
 #include "map/nogps/clock.hpp"
 #include "map/nogps/delegate.hpp"
 #include "map/nogps/engine.hpp"
+#include "map/nogps/esp32_protocol.hpp"
 #include "map/nogps/geo.hpp"
 #include "map/nogps/map_api.hpp"
-#include "map/nogps/recorded_motion.hpp"
 #include "map/nogps/scheduler.hpp"
 #include "map/nogps/service.hpp"
 #include "map/nogps/storage.hpp"
@@ -29,7 +29,6 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
-#include <cstdlib>
 #include <fstream>
 #include <functional>
 #include <map>
@@ -53,11 +52,10 @@
 //                                 where the application kept the car when it was started anew: the next start shows
 //                                 the car there, unless the trip driven again has kept a car of its own by then
 //   J <ms>                        the time jumps on: nothing has happened meanwhile
-//   L <ms> <state>                Bluetooth of the sensor box of the old trips: nothing is done with it
+//   L <ms> <state>                Bluetooth of the box, as DebugPrint(BleState) tells it
 //   B <ms> <duration ms> <yaw mdeg> <km/h> <flags hex> <h1> <h2> <up>
-//                                 a part of a second of the sensor box of the old trips that ends at the time: its
-//                                 rotation, the speed of the car, the acceleration in mm/s2 or "-" without it. It
-//                                 drives the car through a recorded source, see RecordedMotion
+//                                 a part of a second of the box that ends at the time: its rotation, the speed of
+//                                 the car, the acceleration in mm/s2 or "-" without it
 //   G <ms> <lat> <lon> <accuracy m> <m/s or -> <bearing or -> <its accuracy or ->     a position of GPS
 //   X <ms> <0|1>   A <ms> <0|1>   the user turns GPS off or on, the manual mode on or off
 //   T <ms> <lat> <lon>            the user taps the map
@@ -131,7 +129,7 @@ public:
   explicit ReplayStorage(bool firstTrip)
   {
     SettingsStorage const settings;
-    for (auto const key : {kSpeedScale, kSpeedTable, kRoughSpeedTable, kSpeedLag})
+    for (auto const key : {kSpeedScale, kSpeedTable, kRoughSpeedTable, kSpeedLag, kBoxAccel})
     {
       if (firstTrip && (key == kSpeedScale || key == kSpeedTable || key == kRoughSpeedTable))
         continue;
@@ -139,6 +137,7 @@ public:
         m_values[std::string(key)] = *value;
     }
     Set(kInertialEnabled, true);
+    Set(kEsp32Source, true);
   }
 
   std::optional<std::string> GetString(std::string_view key) const override
@@ -167,6 +166,10 @@ public:
   void Elm327Connect(std::string const &) override {}
   void Elm327Write(std::string const &) override {}
   void Elm327Close() override {}
+  void Esp32BleOpen() override {}
+  void Esp32BleSend(std::string const &) override {}
+  void Esp32BleSendFirmware(std::string const &) override {}
+  void Esp32BleClose() override {}
   void OnPosition(Fix const & fix) override { m_onPosition(fix); }
   void OnEvent(Event event) override { LOG(LINFO, ("EVENT", DebugPrint(event))); }
 
@@ -426,7 +429,7 @@ private:
       return;
     ++m_records;
     ms += ReplayClock::kStartMs;
-    // The time of a part of the recorded movement is its end, the time goes on through it.
+    // The time of a part of the box is its end, the time goes on through it.
     int64_t durationMs = 0;
     if (kind == 'B' && !(in >> durationMs))
       return;
@@ -471,8 +474,18 @@ private:
       }
       break;
     }
-    // The Bluetooth of the sensor box of the old trips: the recorded source is heard by its parts only.
-    case 'L': break;
+    case 'L':
+    {
+      std::string name;
+      in >> name;
+      for (auto const state : {BleState::Off, BleState::NoPermission, BleState::Disabled, BleState::Searching,
+                               BleState::PairingClosed, BleState::Connecting, BleState::Pairing, BleState::Connected})
+      {
+        if (DebugPrint(state) == name)
+          engine.OnEsp32BleState(state);
+      }
+      break;
+    }
     case 'G':
     {
       Fix fix;
@@ -578,77 +591,39 @@ private:
   {
     m_engine.reset();
     m_engine = std::make_unique<Engine>(m_delegate, m_map, m_storage, m_clock, m_clock);
-    // The car is driven by the recorded movement of the trip.
-    m_engine->SetMotionSourceFactory([this](MotionSource::Listener & listener)
-    { return std::make_unique<ReplaySource>(m_clock, listener, m_source); });
   }
 
-  /// The recorded source of the navigation, tells the replay when the navigation drops it.
-  class ReplaySource : public RecordedMotion
-  {
-  public:
-    ReplaySource(Clock const & clock, MotionSource::Listener & listener, RecordedMotion *& owner)
-      : RecordedMotion(clock, listener)
-      , m_owner(owner)
-    {
-      m_owner = this;
-    }
-    ~ReplaySource() override
-    {
-      if (m_owner == this)
-        m_owner = nullptr;
-    }
-
-  private:
-    RecordedMotion *& m_owner;
-  };
-
-  // The sensor box of the old trips sent its data 50 times a second, the log keeps 5 parts of a second: every part is
-  // driven as 10 parts.
+  // The box sends its data 50 times a second, the log keeps 5 parts of a second: every part is sent as 10 lines.
   void OnBox(std::istringstream & in, int64_t ms, int64_t durationMs)
   {
-    static int constexpr kParts = 10;
-    // The flags of the box: its gyroscope works and is zeroed, it knows where up is, and it has not been moved.
-    static int constexpr kCalibratedFlags = 0x7;
-    static int constexpr kMountMovedFlag = 0x80;
+    static int constexpr kLines = 10;
     int64_t yawMdeg = 0;
     int speedKmh = 0;
-    std::string flagsHex;
+    std::string flags;
     std::string h1;
-    if (!(in >> yawMdeg >> speedKmh >> flagsHex >> h1))
-    {
-      LOG(LWARNING, ("A wrong part of the box is skipped:", in.str()));
+    if (!(in >> yawMdeg >> speedKmh >> flags >> h1))
       return;
-    }
-    char * end = nullptr;
-    long const flags = std::strtol(flagsHex.c_str(), &end, 16);
-    if (end == flagsHex.c_str() || *end != '\0')
-    {
-      LOG(LWARNING, ("Wrong flags of the box, the part is skipped:", in.str()));
-      return;
-    }
     int h2 = 0;
     int up = 0;
     bool const hasAccel = h1 != "-" && (in >> h2 >> up);
-    RecordedMotion::Part part;
-    if (speedKmh >= 0)
-      part.m_speedKmh = speedKmh;
-    part.m_calibrated = (flags & kCalibratedFlags) == kCalibratedFlags && (flags & kMountMovedFlag) == 0;
-    if (hasAccel)
-      part.m_accel = {{std::atoi(h1.c_str()) / 1000.0, h2 / 1000.0, up / 1000.0}};
-    int64_t sentMdeg = 0;
-    for (int i = 1; i <= kParts; ++i)
+    int64_t const startMdeg = m_yawMdeg;
+    for (int i = 1; i <= kLines; ++i)
     {
-      // The time of the parts goes on by itself: a record driven in the middle of the part has moved the clock.
-      int64_t const partMs = ms - durationMs + durationMs * i / kParts;
-      m_clock.AdvanceTo(partMs);
-      int64_t const totalMdeg = yawMdeg * i / kParts;
-      part.m_yawDeltaDeg = (totalMdeg - sentMdeg) / 1000.0;
-      sentMdeg = totalMdeg;
-      part.m_dtSec = durationMs / 1000.0 / kParts;
-      if (m_source)
-        m_source->OnPart(part);
+      // The time of the box goes on by itself: a record driven in the middle of the part has moved the clock.
+      int64_t const boxMs = ms - durationMs + durationMs * i / kLines;
+      m_clock.AdvanceTo(boxMs);
+      char body[200];
+      int const length =
+          std::snprintf(body, sizeof(body), "NGD,1,%lld,%lld,%lld,0,0,%d,0,%s", static_cast<long long>(++m_seq),
+                        static_cast<long long>(boxMs), static_cast<long long>(startMdeg + yawMdeg * i / kLines),
+                        speedKmh, flags.c_str());
+      if (hasAccel)
+        std::snprintf(body + length, sizeof(body) - length, ",%s,%d,%d,0", h1.c_str(), h2, up);
+      char crc[8];
+      std::snprintf(crc, sizeof(crc), "%04X", esp32::Crc16(body));
+      m_engine->OnEsp32BleBytes(std::string("$") + body + "*" + crc + "\r\n");
     }
+    m_yawMdeg = startMdeg + yawMdeg;
   }
 
   std::ifstream m_input;
@@ -660,13 +635,12 @@ private:
   ReplayRoute m_route;
   ReplayDelegate m_delegate;
   RoutingMapApi m_map;
-  // The source the navigation has made at its last start, nullptr once it is dropped. Before the engine: the engine
-  // drops it when it goes.
-  RecordedMotion * m_source = nullptr;
   std::unique_ptr<Engine> m_engine;
   // Since when the router builds a route, by the time of the phone.
   std::optional<std::chrono::steady_clock::time_point> m_waitsSince;
   bool m_timeSet = false;
+  int64_t m_seq = 0;
+  int64_t m_yawMdeg = 0;
   int64_t m_records = 0;
 };
 

@@ -1,3 +1,3 @@
-• Inertial navigation works with an OBD-II ELM327 adapter and the gyroscope of the phone; the external sensor box is no longer supported.
-• The Inertial navigation window shows the adapter and an on/off switch at once; choosing an adapter turns the navigation on.
-• A phone without a gyroscope is told so: only the manual mode is available on it.
+• The ESP32 sensor box is back on Android: a device without a gyroscope, like a car head unit, follows the car with it.
+• The Inertial navigation window always shows both sources: the NonGPS box (Bluetooth LE) and the ELM327 adapter with the gyroscope of the device.
+• Without a gyroscope the ELM327 choice is disabled and the window tells why.

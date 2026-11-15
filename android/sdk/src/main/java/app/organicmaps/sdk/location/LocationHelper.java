@@ -83,7 +83,7 @@ public class LocationHelper implements BaseLocationProvider.Listener
   private long mInterval;
   private boolean mInFirstRun;
   private boolean mActive;
-  // The system location is stopped while the car is followed by the ELM327 adapter in the background.
+  // The system location is stopped while the car is followed by the ELM327 adapter or the box in the background.
   private boolean mSystemLocationPaused;
   private final Handler mHandler;
   private final Runnable mLocationTimeoutRunnable = this::notifyLocationUpdateTimeout;
@@ -93,6 +93,8 @@ public class LocationHelper implements BaseLocationProvider.Listener
   private final MotionSensors mMotionSensors;
   @NonNull
   private final Elm327Transport mElm327 = new Elm327Transport();
+  @NonNull
+  private final Esp32BleTransport mEsp32Ble;
   @NonNull
   private final MockLocationShare mMockShare;
   // Some providers (e.g. Google fused) don't report network positions separately, so request them explicitly.
@@ -130,6 +132,30 @@ public class LocationHelper implements BaseLocationProvider.Listener
     public void elm327Close()
     {
       mElm327.close();
+    }
+
+    @Override
+    public void esp32BleOpen()
+    {
+      mEsp32Ble.open();
+    }
+
+    @Override
+    public void esp32BleSend(@NonNull byte[] line)
+    {
+      mEsp32Ble.send(line);
+    }
+
+    @Override
+    public void esp32BleSendFirmware(@NonNull byte[] piece)
+    {
+      mEsp32Ble.sendFirmware(piece);
+    }
+
+    @Override
+    public void esp32BleClose()
+    {
+      mEsp32Ble.close();
     }
 
     @Override
@@ -199,6 +225,7 @@ public class LocationHelper implements BaseLocationProvider.Listener
     mLocationProvider = mLocationProviderFactory.getProvider(mContext, this);
     mHandler = new Handler(Looper.getMainLooper());
     mMotionSensors = new MotionSensors(context);
+    mEsp32Ble = new Esp32BleTransport(context);
     mMockShare = new MockLocationShare(context);
   }
 
@@ -580,7 +607,8 @@ public class LocationHelper implements BaseLocationProvider.Listener
   }
 
   /**
-   * Stops the system location in the background while the navigation without GPS follows the car by the adapter: it
+   * Stops the system location in the background while the navigation without GPS follows the car by the adapter or
+   * the box: it
    * doesn't need GPS, and the system gives no location in the background without its permission.
    */
   public void pauseSystemLocation()

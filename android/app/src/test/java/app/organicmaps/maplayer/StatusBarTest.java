@@ -6,6 +6,7 @@ import static org.junit.Assert.assertTrue;
 
 import app.organicmaps.R;
 import app.organicmaps.sdk.location.NoGps;
+import app.organicmaps.sdk.location.NoGps.BleState;
 import app.organicmaps.sdk.location.NoGps.GpsState;
 import app.organicmaps.sdk.location.NoGps.PositionSource;
 import app.organicmaps.sdk.location.NoGps.SourceState;
@@ -85,6 +86,45 @@ public class StatusBarTest
     final StatusBar.Look look = StatusBar.getInertialLook(new NoGps.Status());
     assertEquals(R.drawable.ic_nogps_inertial, look.icon);
     assertEquals(R.drawable.ic_nogps_badge_add, look.badge);
+  }
+
+  // The phone looks for a sleeping box: the button shows the search with the moon.
+  @Test
+  public void sleepingBoxShowsTheSearch()
+  {
+    final StatusBar.Look look = StatusBar.getInertialLook(boxStatus(SourceState.BOX_SLEEPING, BleState.SEARCHING));
+    assertEquals(R.drawable.ic_nogps_bluetooth, look.icon);
+    assertTrue(look.pulsing);
+    assertEquals(R.drawable.ic_nogps_badge_sleep, look.badge);
+  }
+
+  // Bluetooth off matters more than the sleep: the box would not be found when it wakes.
+  @Test
+  public void sleepingBoxWithBluetoothOffShowsIt()
+  {
+    final StatusBar.Look look = StatusBar.getInertialLook(boxStatus(SourceState.BOX_SLEEPING, BleState.DISABLED));
+    assertEquals(R.drawable.ic_nogps_bluetooth_off, look.icon);
+    assertFalse(look.pulsing);
+    assertEquals(0, look.badge);
+  }
+
+  // The OBD of a box that is heard sleeps: nothing is searched.
+  @Test
+  public void sleepingObdShowsTheMoon()
+  {
+    final StatusBar.Look look = StatusBar.getInertialLook(boxStatus(SourceState.OBD_SLEEPING, BleState.CONNECTED));
+    assertEquals(R.drawable.ic_nogps_box, look.icon);
+    assertFalse(look.pulsing);
+    assertEquals(R.drawable.ic_nogps_badge_sleep, look.badge);
+  }
+
+  // The box moves the mark: its own icon, purple.
+  @Test
+  public void connectedBoxShowsTheBox()
+  {
+    final StatusBar.Look look = StatusBar.getInertialLook(boxStatus(SourceState.CONNECTED, BleState.CONNECTED));
+    assertEquals(R.drawable.ic_nogps_box, look.icon);
+    assertEquals(R.color.source_inertial, look.color);
   }
 
   // GPS moves the mark: its look, no badge when the adapter is not a problem.
@@ -252,6 +292,14 @@ public class StatusBarTest
     final NoGps.Status status = new NoGps.Status();
     status.inertialEnabled = true;
     setState(status, "sourceState", source.ordinal());
+    return status;
+  }
+
+  private static NoGps.Status boxStatus(SourceState source, BleState ble)
+  {
+    final NoGps.Status status = inertialStatus(source);
+    status.esp32Source = true;
+    setState(status, "bleState", ble.ordinal());
     return status;
   }
 

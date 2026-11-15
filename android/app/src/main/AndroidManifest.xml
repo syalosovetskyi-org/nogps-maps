@@ -58,9 +58,12 @@
     Services (FGS)) notifications from an app.
   //-->
   <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-  <!-- ELM327 OBD-II adapter for the inertial navigation, paired in the system settings and connected over SPP. -->
+  <!-- ELM327 OBD-II adapter and the ESP32 sensor box for the inertial navigation. -->
   <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
   <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+  <!-- The sensor box is searched over Bluetooth LE. The scan is not used to find out where the phone is. -->
+  <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+  <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
 
   <queries>
     <intent>
@@ -570,7 +573,8 @@
       android:stopWithTask="false"
       />
 
-    <!-- The car followed by the ELM327 adapter while the app is in the background, see NoGpsBackgroundService. -->
+    <!-- The car followed by the ELM327 adapter or the sensor box while the app is in the background, see
+         NoGpsBackgroundService. -->
     <service android:name=".location.NoGpsBackgroundService"
       android:foregroundServiceType="connectedDevice"
       android:exported="false"

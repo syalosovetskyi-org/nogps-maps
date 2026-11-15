@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The inertial navigation: its switch, the ELM327 adapter, the speed and the gyroscope, then GPS. Taller than a phone
+<!-- The inertial navigation: its switch, where the car movement comes from (the box or the ELM327 adapter), the speed
+     and the gyroscope, then GPS. Taller than a phone
      screen with the speed table open, so it scrolls. See SensorsBottomSheet. -->
 <androidx.core.widget.NestedScrollView
   xmlns:android="http://schemas.android.com/apk/res/android"
@@ -24,6 +25,7 @@
     android:textAppearance="?android:textAppearanceLarge"
     android:textStyle="bold" />
 
+  <!-- A device without a gyroscope can't turn the car by itself: the box can, it has its own. -->
   <TextView
     android:id="@+id/nogps_no_gyro"
     android:layout_width="match_parent"
@@ -34,35 +36,114 @@
     android:textSize="16sp"
     android:visibility="gone" />
 
+  <!-- Where the car movement comes from: both choices are shown at once, whatever the state. The row of the chosen
+       one is under it. -->
+  <TextView
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="4dp"
+    android:text="@string/nogps_source_title"
+    android:textColor="?android:textColorSecondary"
+    android:textSize="14sp" />
+  <RadioGroup
+    android:id="@+id/nogps_source"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical">
+    <RadioButton
+      android:id="@+id/nogps_source_box"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:minHeight="48dp"
+      android:text="@string/nogps_source_box"
+      android:textSize="16sp" />
+    <!-- The box: its state, and Connect or Set up, which opens the Box sheet. -->
+    <LinearLayout
+      android:id="@+id/nogps_box_row"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:minHeight="52dp"
+      android:paddingStart="32dp"
+      android:gravity="center_vertical"
+      android:orientation="horizontal"
+      android:visibility="gone">
+      <TextView
+        android:id="@+id/nogps_box"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:textSize="16sp" />
+      <Button
+        android:id="@+id/nogps_box_open"
+        style="?borderlessButtonStyle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/nogps_box_connect_short" />
+    </LinearLayout>
+    <!-- A link of the second rank, while no box is heard: the choices above stay the main thing. -->
+    <TextView
+      android:id="@+id/nogps_buy"
+      android:layout_width="wrap_content"
+      android:layout_height="wrap_content"
+      android:layout_marginStart="32dp"
+      android:background="?selectableItemBackground"
+      android:paddingVertical="6dp"
+      android:text="@string/nogps_box_buy_link"
+      android:textColor="?colorAccent"
+      android:textSize="14sp"
+      android:visibility="gone" />
+    <RadioButton
+      android:id="@+id/nogps_source_elm"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:minHeight="48dp"
+      android:text="@string/nogps_source_elm"
+      android:textSize="16sp" />
+    <!-- Without a gyroscope: why the choice is not available, and what to do instead. -->
+    <TextView
+      android:id="@+id/nogps_source_elm_no_gyro"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:paddingStart="32dp"
+      android:paddingBottom="4dp"
+      android:text="@string/nogps_source_elm_no_gyro"
+      android:textColor="?android:textColorSecondary"
+      android:textSize="14sp"
+      android:visibility="gone" />
+    <!-- The ELM327 adapter: choosing it turns the inertial navigation on. -->
+    <LinearLayout
+      android:id="@+id/nogps_adapter_row"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:minHeight="52dp"
+      android:paddingStart="32dp"
+      android:gravity="center_vertical"
+      android:orientation="horizontal"
+      android:visibility="gone">
+      <TextView
+        android:id="@+id/nogps_adapter"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:textSize="16sp" />
+      <Button
+        android:id="@+id/nogps_choose_adapter"
+        style="?borderlessButtonStyle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/nogps_sensors_choose" />
+    </LinearLayout>
+  </RadioGroup>
+
   <TextView
     android:id="@+id/nogps_hint"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
+    android:layout_marginTop="4dp"
     android:layout_marginBottom="8dp"
     android:text="@string/nogps_sensors_hint"
     android:textColor="?android:textColorSecondary"
     android:textSize="14sp" />
-
-  <!-- Shown at once too: choosing the adapter turns the inertial navigation on. -->
-  <LinearLayout
-    android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:minHeight="52dp"
-    android:gravity="center_vertical"
-    android:orientation="horizontal">
-    <TextView
-      android:id="@+id/nogps_adapter"
-      android:layout_width="0dp"
-      android:layout_height="wrap_content"
-      android:layout_weight="1"
-      android:textSize="16sp" />
-    <Button
-      android:id="@+id/nogps_choose_adapter"
-      style="?borderlessButtonStyle"
-      android:layout_width="wrap_content"
-      android:layout_height="wrap_content"
-      android:text="@string/nogps_sensors_choose" />
-  </LinearLayout>
 
   <!-- While the inertial navigation is on. -->
   <LinearLayout
@@ -72,12 +153,54 @@
     android:orientation="vertical"
     android:visibility="gone">
 
+  <!-- The box only: its firmware and the button to install the one of the application, or how that goes. -->
+  <LinearLayout
+    android:id="@+id/nogps_firmware_row"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:minHeight="52dp"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:visibility="gone">
+    <TextView
+      android:id="@+id/nogps_firmware"
+      android:layout_width="0dp"
+      android:layout_height="wrap_content"
+      android:layout_weight="1"
+      android:textSize="16sp" />
+    <Button
+      android:id="@+id/nogps_firmware_button"
+      style="?borderlessButtonStyle"
+      android:layout_width="wrap_content"
+      android:layout_height="wrap_content" />
+  </LinearLayout>
+
   <TextView
     android:id="@+id/nogps_speed"
     android:layout_width="match_parent"
     android:layout_height="52dp"
     android:gravity="center_vertical"
     android:textSize="16sp" />
+
+  <!-- The box only: what it tells about the car. -->
+  <TextView
+    android:id="@+id/nogps_car"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:lineSpacingExtra="6dp"
+    android:paddingBottom="8dp"
+    android:textSize="16sp"
+    android:visibility="gone" />
+
+  <TextView
+    android:id="@+id/nogps_voltage_mismatch"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:paddingBottom="8dp"
+    android:text="@string/nogps_voltage_mismatch"
+    android:textColor="@color/base_red"
+    android:textSize="16sp"
+    android:visibility="gone" />
 
   <LinearLayout
     android:layout_width="match_parent"

@@ -15,6 +15,7 @@ public:
   // The keys are shared with the settings of the Android app made before the navigation moved to the core.
   static std::string_view constexpr kInertialEnabled = "NoGpsInertialEnabled";
   static std::string_view constexpr kElm327Address = "NoGpsElm327Address";
+  static std::string_view constexpr kEsp32Source = "NoGpsEsp32Source";
   // The user has chosen to ignore GPS, see Engine::SetGpsDisabled().
   static std::string_view constexpr kGpsDisabled = "NoGpsGpsDisabled";
   static std::string_view constexpr kSpeedScale = "NoGpsSpeedScale";
@@ -22,11 +23,20 @@ public:
   static std::string_view constexpr kRoughSpeedTable = "NoGpsRoughSpeedTable";
   static std::string_view constexpr kSpeedFactor = "NoGpsSpeedFactor";
   static std::string_view constexpr kSpeedLag = "NoGpsSpeedLag";
+  // How the accelerometer of the sensor box is fixed in the car: the identifier of the box and what is learned.
+  static std::string_view constexpr kBoxAccel = "NoGpsBoxAccel";
   static std::string_view constexpr kWrongNetworkPoints = "NoGpsWrongNetworkPoints";
   static std::string_view constexpr kLastTrusted = "NoGpsLastTrusted";
   // Where the car was left and the way it looked, "lat,lon,bearing,manual,unixMs": "-" for an unknown bearing, 1 if
   // GPS was not trusted then.
   static std::string_view constexpr kCarPosition = "NoGpsCarPosition";
+  // When the ESP32 sensor box was powered on the last time, milliseconds since the Unix epoch: for a box that
+  // doesn't count its power-ons.
+  static std::string_view constexpr kBoxPowerOnTime = "NoGpsBoxPowerOnTime";
+  // How many times the known boxes were powered on by their own count, "C47D:3,42FD:1".
+  static std::string_view constexpr kBoxPowerOns = "NoGpsBoxPowerOns";
+  // The box has been powered on since the user calibrated it.
+  static std::string_view constexpr kBoxCalibrationAdvised = "NoGpsBoxCalibrationAdvised";
 
   virtual ~Storage() = default;
 
@@ -49,9 +59,15 @@ public:
     SetString(key, settings::ToString(value));
   }
 
-  // A new user has the inertial navigation off until they turn it on or choose the ELM327 adapter. The choice was not
-  // saved while the navigation was on by default: who has chosen the adapter then keeps it.
-  bool IsInertialEnabled() const { return Get<bool>(kInertialEnabled, GetString(kElm327Address).has_value()); }
+  // A new user has no box until they connect one. The choice was not saved while the navigation was on by
+  // default: who has heard a box or chosen the ELM327 adapter then keeps it.
+  bool IsInertialEnabled() const
+  {
+    return Get<bool>(kInertialEnabled, GetString(kElm327Address) || GetString(kBoxAccel) || GetString(kBoxPowerOns) ||
+                                           GetString(kBoxPowerOnTime));
+  }
+  // Who has chosen the ELM327 adapter, when the phone was the default source, keeps the phone.
+  bool IsEsp32Source() const { return Get<bool>(kEsp32Source, Get<std::string>(kElm327Address, "").empty()); }
 };
 
 /// The storage in the settings of the app.

@@ -6,7 +6,7 @@
 
 namespace nogps
 {
-/// Checks while GPS works that the gyroscope turns the car the same way as GPS does. A phone can be mounted
+/// Checks while GPS works that the gyroscope turns the car the same way as GPS does. A sensor box can be mounted
 /// in any position, and a driver of its gyroscope with wrong axes turns the car left on right turns. It would be
 /// seen only when GPS is lost, so the turns are compared beforehand.
 class TurnSignChecker

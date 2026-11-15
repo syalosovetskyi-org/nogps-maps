@@ -2,8 +2,9 @@ package app.organicmaps;
 
 import static android.Manifest.permission.ACCESS_COARSE_LOCATION;
 import static android.Manifest.permission.ACCESS_FINE_LOCATION;
-import static android.Manifest.permission.POST_NOTIFICATIONS;
 import static android.Manifest.permission.BLUETOOTH_CONNECT;
+import static android.Manifest.permission.BLUETOOTH_SCAN;
+import static android.Manifest.permission.POST_NOTIFICATIONS;
 import static android.content.pm.PackageManager.PERMISSION_GRANTED;
 import static app.organicmaps.sdk.location.LocationState.FOLLOW;
 import static app.organicmaps.sdk.location.LocationState.FOLLOW_AND_ROTATE;
@@ -130,7 +131,9 @@ import app.organicmaps.widget.placepage.PlacePageViewModel;
 import com.google.android.material.bottomsheet.BottomSheetBehavior;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.Objects;
+import java.util.Set;
 
 public class MwmActivity extends BaseMwmFragmentActivity
     implements PlacePageActivationListener, MapRenderingListener, RoutingController.Container, LocationListener,
@@ -195,7 +198,12 @@ public class MwmActivity extends BaseMwmFragmentActivity
 
   @SuppressWarnings("NotNullFieldNotInitialized")
   private ActivityResultLauncher<String> mPostNotificationPermissionRequest;
-  private ActivityResultLauncher<String> mCarBluetoothPermissionRequest;
+  private ActivityResultLauncher<String[]> mBoxBluetoothPermissionRequest;
+  // Once for a start of the app: after two refusals the system doesn't ask any more by itself.
+  private static boolean sBoxBluetoothPermissionAsked;
+  // The head unit build asks for its permissions one by one, each once for a start of the app.
+  private ActivityResultLauncher<String> mCarPermissionRequest;
+  private static final Set<String> sCarPermissionsAsked = new HashSet<>();
   // Once for a start of the app.
   private static boolean sCarSetupRun;
 
@@ -581,8 +589,11 @@ public class MwmActivity extends BaseMwmFragmentActivity
                                                            this::onLocationResolutionResult);
     mPostNotificationPermissionRequest = registerForActivityResult(new ActivityResultContracts.RequestPermission(),
                                                                    this::onPostNotificationPermissionResult);
-    mCarBluetoothPermissionRequest = registerForActivityResult(
-        new ActivityResultContracts.RequestPermission(), granted -> onCarSetup(CarSetup.run(this, granted)));
+    // The state of the box tells whether it is given.
+    mBoxBluetoothPermissionRequest =
+        registerForActivityResult(new ActivityResultContracts.RequestMultiplePermissions(), result -> {});
+    mCarPermissionRequest =
+        registerForActivityResult(new ActivityResultContracts.RequestPermission(), granted -> continueCarSetup());
     mPowerSaveSettings =
         registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), this::onPowerSaveResult);
 
@@ -905,6 +916,8 @@ public class MwmActivity extends BaseMwmFragmentActivity
   {
     final int message = switch (event)
     {
+      case FIRMWARE_UPDATE_AVAILABLE, FIRMWARE_UPDATE_DONE, FIRMWARE_UPDATE_FAILED -> onFirmwareEvent(event);
+      case BOX_CALIBRATION_ADVISED -> onBoxCalibrationAdvised();
       // The buttons show the mode, they are updated every second.
       case MANUAL_MODE_CHANGED -> 0;
       case GPS_BACK -> R.string.nogps_gps_back_auto;
@@ -913,14 +926,70 @@ public class MwmActivity extends BaseMwmFragmentActivity
       case GPS_RESTORED -> R.string.nogps_gps_restored;
       case ROAD_LOST -> R.string.nogps_road_lost;
       case TURNS_REVERSED -> R.string.nogps_turns_reversed;
-      // The part to look at: the adapter in the car.
-      case MOTION_SOURCE_STOPPED -> R.string.nogps_obd_stopped;
+      // The part to look at: the box itself or the adapter in the car.
+      case MOTION_SOURCE_STOPPED ->
+        NoGps.getStatus().esp32Source ? R.string.nogps_box_stopped : R.string.nogps_obd_stopped;
       // The car is always on a road.
       case MARK_NO_ROAD -> R.string.nogps_mark_no_road;
-      case NOT_CALIBRATED -> R.string.nogps_gyro_stopped;
+      case NOT_CALIBRATED -> notCalibratedMessage(NoGps.getStatus());
     };
     if (message != 0)
       Toast.makeText(this, message, event == NoGps.Event.MARK_NO_ROAD ? Toast.LENGTH_SHORT : Toast.LENGTH_LONG).show();
+  }
+
+  /**
+   * The firmware of the sensor box: asks the user to install the one of the application and tells how it ended.
+   * @return 0, there is no message of a fixed text.
+   */
+  private int onFirmwareEvent(@NonNull NoGps.Event event)
+  {
+    final NoGps.Status status = NoGps.getStatus();
+    if (event == NoGps.Event.FIRMWARE_UPDATE_DONE)
+    {
+      Toast.makeText(this, getString(R.string.nogps_firmware_done, status.boxFirmware), Toast.LENGTH_LONG).show();
+    }
+    else if (event == NoGps.Event.FIRMWARE_UPDATE_FAILED)
+    {
+      final String reason = firmwareError(status.firmwareUpdateError);
+      Toast.makeText(this, getString(R.string.nogps_firmware_failed, reason), Toast.LENGTH_LONG).show();
+    }
+    else if (!status.bundledFirmware.isEmpty() && !isFinishing() && !getSupportFragmentManager().isStateSaved())
+    {
+      new MaterialAlertDialogBuilder(this, R.style.MwmTheme_AlertDialog)
+          .setTitle(R.string.nogps_firmware_title)
+          .setMessage(getString(R.string.nogps_firmware_offer, status.boxFirmware, status.bundledFirmware))
+          .setPositiveButton(getString(R.string.nogps_firmware_install, status.bundledFirmware),
+                             (dialog, which) -> {
+                               NoGps.nativeStartFirmwareUpdate();
+                               // It shows how the update goes.
+                               showSensorsSheet();
+                             })
+          .setNegativeButton(R.string.later, null)
+          .show();
+    }
+    return 0;
+  }
+
+  /**
+   * The sensor box has been plugged in: asks the user to calibrate it, the car should stand on a level place.
+   * @return 0, there is no message of a fixed text.
+   */
+  private int onBoxCalibrationAdvised()
+  {
+    if (isFinishing() || getSupportFragmentManager().isStateSaved())
+      return 0;
+    new MaterialAlertDialogBuilder(this, R.style.MwmTheme_AlertDialog)
+        .setTitle(R.string.nogps_box_calibration)
+        .setMessage(R.string.nogps_box_calibration_offer)
+        .setPositiveButton(R.string.nogps_sensors_calibrate_box,
+                           (dialog, which) -> {
+                             NoGps.nativeCalibrate();
+                             // It shows how the calibration goes.
+                             showSensorsSheet();
+                           })
+        .setNegativeButton(R.string.later, null)
+        .show();
+    return 0;
   }
 
   private void showSensorsSheet()
@@ -928,6 +997,32 @@ public class MwmActivity extends BaseMwmFragmentActivity
     if (!getSupportFragmentManager().isStateSaved()
         && getSupportFragmentManager().findFragmentByTag(SensorsBottomSheet.TAG) == null)
       new SensorsBottomSheet().show(getSupportFragmentManager(), SensorsBottomSheet.TAG);
+  }
+
+  @NonNull
+  private String firmwareError(@NonNull String code)
+  {
+    return switch (code)
+    {
+      case "MOVING" -> getString(R.string.nogps_firmware_error_moving);
+      case "LOW_VOLTAGE" -> getString(R.string.nogps_firmware_error_voltage);
+      case "LINK" -> getString(R.string.nogps_firmware_error_link);
+      case "CANCELED", "ABORTED" -> getString(R.string.nogps_firmware_error_canceled);
+      case "ROLLBACK" -> getString(R.string.nogps_firmware_error_rollback);
+      case "PENDING" -> getString(R.string.nogps_firmware_error_pending);
+      default -> getString(R.string.nogps_firmware_error_code, code);
+    };
+  }
+
+  /**
+   * The car is not followed while it drives: what is to be calibrated.
+   */
+  private static int notCalibratedMessage(@NonNull NoGps.Status status)
+  {
+    if (!status.esp32Source)
+      return R.string.nogps_gyro_stopped;
+    return status.getCalibration() == NoGps.CalibrationState.MOUNT_MOVED ? R.string.nogps_box_moved_stopped
+                                                                         : R.string.nogps_box_uncalibrated_stopped;
   }
 
   private boolean closeBottomSheet(String id)
@@ -1713,27 +1808,69 @@ public class MwmActivity extends BaseMwmFragmentActivity
       mLocationPermissionRequest.launch(new String[] {ACCESS_COARSE_LOCATION, ACCESS_FINE_LOCATION});
       return;
     }
-    // The head unit build sets itself up after the location is settled: only one request is shown at a time.
-    if (BuildConfig.NOGPS_CAR)
-      setUpCar();
+    requestBoxBluetoothPermission();
   }
 
   /**
-   * The head unit build: "Phone + ELM327" with the paired adapter, asked for Bluetooth access first.
+   * The navigation without GPS looks for the sensor box over Bluetooth LE out of the box, without the sensors
+   * screen opened. Asked after the location is settled: only one request is shown at a time, and its dialogs
+   * are dismissed when another one comes.
+   */
+  private void requestBoxBluetoothPermission()
+  {
+    // The head unit build sets itself up after the location is settled: only one request is shown at a time.
+    if (BuildConfig.NOGPS_CAR)
+    {
+      setUpCar();
+      return;
+    }
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || sBoxBluetoothPermissionAsked
+        || !LocationUtils.checkFineLocationPermission(this))
+      return;
+    final NoGps.Status status = NoGps.getStatus();
+    if (!status.inertialEnabled || !status.esp32Source)
+      return;
+    sBoxBluetoothPermissionAsked = true;
+    if (ActivityCompat.checkSelfPermission(this, BLUETOOTH_SCAN) == PERMISSION_GRANTED
+        && ActivityCompat.checkSelfPermission(this, BLUETOOTH_CONNECT) == PERMISSION_GRANTED)
+      return;
+    Logger.i(TAG, "Requesting BLUETOOTH_SCAN + BLUETOOTH_CONNECT permissions for the sensor box");
+    mBoxBluetoothPermissionRequest.launch(new String[] {BLUETOOTH_SCAN, BLUETOOTH_CONNECT});
+  }
+
+  /**
+   * The head unit build: the source of the car movement by the gyroscope of the head unit (the box without one,
+   * "Phone + ELM327" with one), after the permissions it needs.
    */
   private void setUpCar()
   {
     if (sCarSetupRun)
       return;
     sCarSetupRun = true;
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
-        && ActivityCompat.checkSelfPermission(this, BLUETOOTH_CONNECT) != PERMISSION_GRANTED)
+    continueCarSetup();
+  }
+
+  /**
+   * Asks for the next permission the source of the head unit needs, one at a time and each once; then sets the
+   * source up with what is given.
+   */
+  private void continueCarSetup()
+  {
+    boolean allGranted = true;
+    for (String permission : CarSetup.getPermissions(this))
     {
-      Logger.i(TAG, "Requesting BLUETOOTH_CONNECT permission for the OBD adapter");
-      mCarBluetoothPermissionRequest.launch(BLUETOOTH_CONNECT);
-      return;
+      if (ActivityCompat.checkSelfPermission(this, permission) == PERMISSION_GRANTED)
+        continue;
+      allGranted = false;
+      if (sCarPermissionsAsked.add(permission))
+      {
+        Logger.i(TAG, "Requesting " + permission + " for the head unit setup");
+        mCarPermissionRequest.launch(permission);
+        return;
+      }
+      Logger.w(TAG, permission + " is refused, the head unit is set up without it");
     }
-    onCarSetup(CarSetup.run(this, true));
+    onCarSetup(CarSetup.run(this, allGranted));
   }
 
   private void onCarSetup(@NonNull CarSetup.Result result)
@@ -1744,10 +1881,11 @@ public class MwmActivity extends BaseMwmFragmentActivity
     case NO_ADAPTER, NO_BLUETOOTH ->
     {
       Toast.makeText(this, R.string.nogps_no_paired, Toast.LENGTH_LONG).show();
-      if (getSupportFragmentManager().findFragmentByTag(SensorsBottomSheet.TAG) == null)
-        new SensorsBottomSheet().show(getSupportFragmentManager(), SensorsBottomSheet.TAG);
+      showSensorsSheet();
     }
-    case ALREADY_CHOSEN, CHOSEN -> {}
+    // The box is to be paired in its sheet: the sensors screen shows it first.
+    case BOX_CHOSEN -> showSensorsSheet();
+    case ALREADY_CHOSEN, CHOSEN, BOX -> {}
     }
   }
 

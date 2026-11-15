@@ -123,7 +123,7 @@ public class StatusBar
   {
     final boolean inertial = navShowsInertial(status.getSource(), status.inertialEnabled);
     final String title = context.getString(inertial ? R.string.nogps_sensors_title : R.string.nogps_status_gps);
-    final String state = inertial ? status.inertialEnabled ? SensorsBottomSheet.adapterStateText(context, status) : ""
+    final String state = inertial ? status.inertialEnabled ? SensorsBottomSheet.sourceStateText(context, status) : ""
                                   : getGpsStateText(context, status);
     final String accuracy = getAccuracyText(context, status);
     final StringBuilder text = new StringBuilder(title);
@@ -236,18 +236,73 @@ public class StatusBar
   @NonNull
   public static Look getInertialLook(@NonNull NoGps.Status status)
   {
-    // Off: the button calls to turn it on and to choose the adapter.
+    // Off: the button calls to turn it on and to choose the source.
     if (!status.inertialEnabled)
       return new Look(R.drawable.ic_nogps_inertial, 0, R.drawable.ic_nogps_badge_add, R.color.source_connecting,
                       false);
+    if (status.esp32Source)
+      return getBoxLook(status);
     return switch (status.getSourceState())
     {
       case CONNECTED -> new Look(R.drawable.ic_nogps_inertial, R.color.source_inertial);
-      case NO_CAR_DATA, NO_ADAPTER ->
+      // The last ones are of the sensor box only.
+      case NO_CAR_DATA, NO_ADAPTER, OBD_DISABLED, OBD_CONNECTING, OBD_ERROR, BOX_SLEEPING, OBD_SLEEPING, UPDATING ->
         new Look(R.drawable.ic_nogps_inertial, R.color.source_warning, R.drawable.ic_nogps_badge_alert,
                  R.color.source_warning, false);
       // The ELM327 adapter is reached over Bluetooth.
       case DISCONNECTED, CONNECTING -> new Look(R.drawable.ic_nogps_bluetooth, R.color.source_connecting, 0, 0, true);
+    };
+  }
+
+  /**
+   * The NonGPS box, also in its sheet.
+   */
+  @NonNull
+  public static Look getBoxLook(@NonNull NoGps.Status status)
+  {
+    // Not set up: the Box sheet calls to connect it.
+    if (!status.inertialEnabled)
+      return new Look(R.drawable.ic_nogps_box, 0, R.drawable.ic_nogps_badge_add, R.color.source_connecting, false);
+    return switch (status.getSourceState())
+    {
+      case CONNECTED -> new Look(R.drawable.ic_nogps_box, R.color.source_inertial);
+      case UPDATING ->
+        new Look(R.drawable.ic_nogps_box, R.color.source_connecting, R.drawable.ic_nogps_badge_update,
+                 R.color.source_connecting, true);
+      case BOX_SLEEPING -> getBoxSleepingLook(status);
+      case OBD_SLEEPING ->
+        new Look(R.drawable.ic_nogps_box, R.color.source_sleeping, R.drawable.ic_nogps_badge_sleep,
+                 R.color.source_sleeping, false);
+      case NO_CAR_DATA, OBD_DISABLED, OBD_CONNECTING, OBD_ERROR, NO_ADAPTER ->
+        new Look(R.drawable.ic_nogps_box, R.color.source_warning, R.drawable.ic_nogps_badge_alert,
+                 R.color.source_warning, false);
+      case DISCONNECTED, CONNECTING -> getBoxSearchLook(status);
+    };
+  }
+
+  /**
+   * The box is away or its radio is off: the phone keeps looking for it.
+   */
+  @NonNull
+  private static Look getBoxSleepingLook(@NonNull NoGps.Status status)
+  {
+    final Look look = getBoxSearchLook(status);
+    if (!look.pulsing)
+      return look;
+    return new Look(look.icon, look.color, R.drawable.ic_nogps_badge_sleep, R.color.source_sleeping, true);
+  }
+
+  /**
+   * The box is not heard yet: the phone looks for it by Bluetooth LE, then waits for its data.
+   */
+  @NonNull
+  private static Look getBoxSearchLook(@NonNull NoGps.Status status)
+  {
+    return switch (status.getBleState())
+    {
+      case CONNECTED -> new Look(R.drawable.ic_nogps_box, R.color.source_connecting, 0, 0, true);
+      case OFF, NO_PERMISSION, DISABLED -> new Look(R.drawable.ic_nogps_bluetooth_off, R.color.source_sleeping);
+      default -> new Look(R.drawable.ic_nogps_bluetooth, R.color.source_connecting, 0, 0, true);
     };
   }
 
