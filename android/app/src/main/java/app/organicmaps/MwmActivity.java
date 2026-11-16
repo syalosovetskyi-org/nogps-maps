@@ -1687,6 +1687,9 @@ public class MwmActivity extends BaseMwmFragmentActivity
       Logger.i(LOCATION_TAG, "Location updates are stopped by the user manually.");
       if (locationHelper.isActive())
         locationHelper.stop();
+      // Without the permission the location request is about to be shown: the car setup waits for its result.
+      if (BuildConfig.NOGPS_CAR && LocationUtils.checkLocationPermission(this))
+        setUpCar();
       return;
     }
 
@@ -1908,6 +1911,9 @@ public class MwmActivity extends BaseMwmFragmentActivity
     Logger.w(LOCATION_TAG, "Permissions ACCESS_COARSE_LOCATION and ACCESS_FINE_LOCATION have been refused");
     // Calls onMyPositionModeChanged(NOT_FOLLOW_NO_POSITION).
     LocationState.nativeOnLocationError(LocationState.ERROR_DENIED);
+    // The head unit build needs the OBD adapter, not the location: set it up anyway.
+    if (BuildConfig.NOGPS_CAR)
+      setUpCar();
 
     if (mLocationErrorDialog != null && mLocationErrorDialog.isShowing())
     {
