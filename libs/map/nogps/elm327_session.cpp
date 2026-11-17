@@ -70,7 +70,7 @@ void Elm327Session::OnConnected()
 {
   if (!m_running || m_step != Step::Connecting)
     return;
-  LOG(LINFO, ("Connected to", m_address));
+  LOG(LINFO, ("ELM327 connected"));
   m_step = Step::Initializing;
   m_initCommand = 0;
   SendCommand(kElm327InitCommands[0], kResponseTimeoutMs);

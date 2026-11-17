@@ -378,6 +378,8 @@ private:
     int64_t m_timeMs = 0;
   };
   std::optional<Compass> m_compass;
+  std::optional<int64_t> m_lastGyroMs;
+  std::optional<int64_t> m_lastAccelMs;
   // After the manual mode the next real position must replace the manual one, even if it is less accurate.
   bool m_acceptNextLocation = false;
   // The source of the last position passed to the core, used to check the route when the source changes.
