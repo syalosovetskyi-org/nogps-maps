@@ -335,6 +335,19 @@ void TrafficManager::OnTrafficRequestFailed(traffic::TrafficInfo && info)
   it->second.m_isWaitingForResponse = false;
   it->second.m_lastAvailability = info.GetAvailability();
 
+  if (info.GetAvailability() == traffic::TrafficInfo::Availability::NoData && it->second.m_isLoaded)
+  {
+    // A successful empty feed or an expired origin response invalidates old closures too.
+    ASSERT_GREATER_OR_EQUAL(m_currentCacheSizeBytes, it->second.m_dataSize, ());
+    m_currentCacheSizeBytes -= it->second.m_dataSize;
+    it->second.m_dataSize = 0;
+    it->second.m_isLoaded = false;
+    m_trafficETags.erase(info.GetMwmId());
+    m_drapeEngine.SafeCall(&df::DrapeEngine::ClearTrafficCache, info.GetMwmId());
+    GetPlatform().RunTask(Platform::Thread::Gui,
+                          [this, mwmId = info.GetMwmId()]() { m_observer.OnTrafficInfoRemoved(mwmId); });
+  }
+
   if (info.GetAvailability() == traffic::TrafficInfo::Availability::Unknown && !it->second.m_isLoaded)
   {
     if (m_activeDrapeMwms.find(info.GetMwmId()) != m_activeDrapeMwms.cend() ||

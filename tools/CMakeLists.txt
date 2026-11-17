@@ -8,3 +8,5 @@ omim_add_tool_subdirectory(track_generator)
 if (NOT SKIP_QT_GUI)
   omim_add_tool_subdirectory(skin_generator)
 endif()
+
+omim_add_tool_subdirectory(traffic_gen)

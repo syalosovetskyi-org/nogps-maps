@@ -147,5 +147,10 @@ UNIT_TEST(TrafficInfo_UpdateTrafficData)
   TEST(info.UpdateTrafficData(values2), ());
   for (size_t i = 0; i < keys.size(); ++i)
     TEST_EQUAL(info.GetSpeedGroup(keys[i]), values2[i], ());
+
+  TEST(!info.UpdateTrafficData(std::vector<SpeedGroup>(keys.size(), SpeedGroup::Unknown)), ());
+  TEST(info.GetAvailability() == TrafficInfo::Availability::NoData, ());
+  TEST(info.GetColoring().empty(), ());
+  TEST(!info.UpdateTrafficData({SpeedGroup::G0}), ());
 }
 }  // namespace traffic

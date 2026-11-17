@@ -60,11 +60,18 @@ bool ReadRemoteFile(std::string const & url, std::vector<uint8_t> & contents, in
 
 std::string MakeRemoteURL(std::string const & name, uint64_t version)
 {
-  if (std::string(TRAFFIC_DATA_BASE_URL).empty())
+#ifdef NOGPS_TRAFFIC_DATA_BASE_URL
+  std::string const baseUrl = NOGPS_TRAFFIC_DATA_BASE_URL;
+#else
+  std::string const baseUrl = TRAFFIC_DATA_BASE_URL;
+#endif
+  if (baseUrl.empty())
     return {};
 
   std::stringstream ss;
-  ss << TRAFFIC_DATA_BASE_URL;
+  ss << baseUrl;
+  if (baseUrl.back() != '/')
+    ss << '/';
   if (version != 0)
     ss << version << "/";
   ss << url::UrlEncode(name) << TRAFFIC_FILE_EXTENSION;
@@ -147,7 +154,13 @@ bool TrafficInfo::ReceiveTrafficData(std::string & etag)
   std::vector<SpeedGroup> values;
   switch (ReceiveTrafficValues(etag, values))
   {
-  case ServerDataStatus::New: return UpdateTrafficData(values);
+  case ServerDataStatus::New:
+    if (!UpdateTrafficData(values))
+    {
+      etag.clear();
+      return false;
+    }
+    return true;
   case ServerDataStatus::NotChanged: return true;
   case ServerDataStatus::NotFound:
   case ServerDataStatus::Error: return false;
@@ -478,6 +491,11 @@ bool TrafficInfo::UpdateTrafficData(std::vector<SpeedGroup> const & values)
     if (values[i] != SpeedGroup::Unknown)
       m_coloring.emplace(m_keys[i], values[i]);
 
+  if (m_coloring.empty())
+  {
+    m_availability = Availability::NoData;
+    return false;
+  }
   return true;
 }
 
