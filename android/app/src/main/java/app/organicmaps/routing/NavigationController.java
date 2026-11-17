@@ -9,6 +9,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ImageView;
 import android.widget.TextView;
+import android.widget.Toast;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
@@ -299,31 +300,31 @@ public class NavigationController implements TrafficManager.TrafficCallback, Nav
   @Override
   public void onOutdated()
   {
-    // no op
+    Toast.makeText(mFrame.getContext(), R.string.traffic_feed_outdated, Toast.LENGTH_LONG).show();
   }
 
   @Override
   public void onNoData()
   {
-    // no op
+    Toast.makeText(mFrame.getContext(), R.string.traffic_feed_unavailable, Toast.LENGTH_LONG).show();
   }
 
   @Override
   public void onNetworkError()
   {
-    // no op
+    Toast.makeText(mFrame.getContext(), R.string.traffic_feed_network_error, Toast.LENGTH_LONG).show();
   }
 
   @Override
   public void onExpiredData()
   {
-    // no op
+    Toast.makeText(mFrame.getContext(), R.string.traffic_feed_update_maps, Toast.LENGTH_LONG).show();
   }
 
   @Override
   public void onExpiredApp()
   {
-    // no op
+    Toast.makeText(mFrame.getContext(), R.string.traffic_feed_update_app, Toast.LENGTH_LONG).show();
   }
 
   @Override

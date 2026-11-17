@@ -72,12 +72,13 @@ public enum TrafficManager {
     }
     Logger.d(TAG, "Attach callback '" + callback + "'");
     mCallbacks.add(callback);
-    postPendingState();
+    mState.activate(List.of(callback));
   }
 
-  private void postPendingState()
+  public void detach(@NonNull TrafficCallback callback)
   {
-    mStateChangeListener.onTrafficStateChanged(mState.ordinal());
+    checkInitialization();
+    mCallbacks.remove(callback);
   }
 
   public void detachAll()

@@ -15,6 +15,8 @@ public class LayersUtils
     availableLayers.add(Mode.HIKING);
     availableLayers.add(Mode.CYCLING);
     availableLayers.add(Mode.SUBWAY);
+    if (app.organicmaps.sdk.BuildConfig.TRAFFIC_ENABLED)
+      availableLayers.add(Mode.TRAFFIC);
     // The Satellite toggle is a quick on/off for an already-configured source; configuration lives in
     // Settings, so only offer the button once a server URL is set.
     if (!Framework.nativeGetBackgroundTilesUrl().isEmpty())

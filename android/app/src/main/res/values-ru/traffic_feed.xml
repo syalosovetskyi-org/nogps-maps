@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="traffic_feed_unavailable">Данные о пробках недоступны</string>
+    <string name="traffic_feed_outdated">Данные о пробках устарели</string>
+    <string name="traffic_feed_network_error">Не удалось загрузить данные о пробках</string>
+    <string name="traffic_feed_update_maps">Обновите карты для отображения пробок</string>
+    <string name="traffic_feed_update_app">Обновите приложение для отображения пробок</string>
+</resources>
