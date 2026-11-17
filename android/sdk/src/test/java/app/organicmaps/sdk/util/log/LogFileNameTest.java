@@ -29,6 +29,31 @@ public class LogFileNameTest
   }
 
   @Test
+  public void tripFileName_hasDayAndPartWithoutDeviceId()
+  {
+    final GregorianCalendar day = new GregorianCalendar(2026, Calendar.NOVEMBER, 17, 23, 59);
+    assertEquals("trip-2026-11-17.log", LogFiles.tripFileName(day.getTime(), 0));
+    assertEquals("trip-2026-11-17.3.log", LogFiles.tripFileName(day.getTime(), 3));
+    day.add(Calendar.MINUTE, 1);
+    assertEquals("trip-2026-11-18.log", LogFiles.tripFileName(day.getTime(), 0));
+  }
+
+  @Test
+  public void tripRetention_reservesSpaceForNextPart() throws IOException
+  {
+    for (int part = 0; part < 7; ++part)
+      makeFile("trip-2026-11-17." + part + ".log", 3_000_000, part + 1);
+    LogFiles.deleteOldest(mFolder.getRoot(), LogFiles.MAX_TRIP_SIZE - 3_000_000);
+    makeFile("trip-2026-11-18.log", 3_000_000, 10);
+    long size = 0;
+    for (File file : mFolder.getRoot().listFiles())
+      size += file.length();
+    assertTrue(size <= LogFiles.MAX_TRIP_SIZE);
+    assertTrue(new File(mFolder.getRoot(), "trip-2026-11-17.6.log").exists());
+    assertTrue(new File(mFolder.getRoot(), "trip-2026-11-18.log").exists());
+  }
+
+  @Test
   public void sanitizeModel_keepsOnlyLettersAndDigits()
   {
     assertEquals("Pixel_7", LogFiles.sanitizeModel("Pixel 7"));
