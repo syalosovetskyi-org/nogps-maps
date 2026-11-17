@@ -234,4 +234,46 @@ UNIT_CLASS_TEST(ApplyingTrafficTest, XXGraph_ChangingTraffic)
     TestRouteGeometry(*starter, Algorithm::Result::OK, noTrafficGeom);
   }
 }
+UNIT_CLASS_TEST(ApplyingTrafficTest, JointGraph_ClosedDirectedSegment)
+{
+  auto graph = BuildXXGraph(GetEstimator());
+  auto & index = graph->GetIndexGraph(kTestNumMwmId);
+  Segment const before(kTestNumMwmId, 1, 0, true);
+  Segment const closed(kTestNumMwmId, 3, 0, true);
+  Segment const after(kTestNumMwmId, 6, 0, true);
+  TEST(index.GetJointEdgeByLastPoint(before, closed, true, 1).has_value(), ());
+  TEST(index.GetJointEdgeByLastPoint(after, closed, false, 0).has_value(), ());
+  TrafficInfo::Coloring const coloring = {
+      {{3, 0, TrafficInfo::RoadSegmentId::kForwardDirection}, SpeedGroup::TempBlock}};
+  SetTrafficColoring(make_shared<TrafficInfo::Coloring const>(coloring));
+  TEST(!index.GetJointEdgeByLastPoint(before, closed, true, 1).has_value(), ());
+  TEST(!index.GetJointEdgeByLastPoint(after, closed, false, 0).has_value(), ());
+}
+
+// Both ways through the middle are blocked: a large finite penalty must not
+// permit a route when there is no legal detour.
+UNIT_CLASS_TEST(ApplyingTrafficTest, XXGraph_ClosuresDisconnectGraph)
+{
+  TrafficInfo::Coloring const coloring = {
+      {{3, 0, TrafficInfo::RoadSegmentId::kForwardDirection}, SpeedGroup::TempBlock},
+      {{7, 0, TrafficInfo::RoadSegmentId::kForwardDirection}, SpeedGroup::TempBlock}};
+  SetTrafficColoring(make_shared<TrafficInfo::Coloring const>(coloring));
+  auto graph = BuildXXGraph(GetEstimator());
+  auto const start = MakeFakeEnding(9, 0, m2::PointD(2.0, -1.0), *graph);
+  auto const finish = MakeFakeEnding(6, 0, m2::PointD(3.0, 3.0), *graph);
+  auto starter = MakeStarter(start, finish, *graph);
+  TestRouteGeometry(*starter, Algorithm::Result::NoPath, {});
+}
+
+UNIT_CLASS_TEST(ApplyingTrafficTest, XXGraph_ClosureAtEndpoint)
+{
+  TrafficInfo::Coloring const coloring = {
+      {{9, 0, TrafficInfo::RoadSegmentId::kForwardDirection}, SpeedGroup::TempBlock}};
+  SetTrafficColoring(make_shared<TrafficInfo::Coloring const>(coloring));
+  auto graph = BuildXXGraph(GetEstimator());
+  auto const start = MakeFakeEnding(9, 0, m2::PointD(2.0, -0.5), *graph);
+  auto const finish = MakeFakeEnding(6, 0, m2::PointD(3.0, 3.0), *graph);
+  auto starter = MakeStarter(start, finish, *graph);
+  TestRouteGeometry(*starter, Algorithm::Result::NoPath, {});
+}
 }  // namespace applying_traffic_test
