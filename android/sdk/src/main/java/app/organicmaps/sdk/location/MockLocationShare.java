@@ -52,6 +52,8 @@ public final class MockLocationShare
     @NonNull
     private State mState = State.OFF;
     private long mStateSinceMs;
+    // Queued and cached mock fixes can outlive OFF, stop/start and provider removal.
+    private boolean mHasShared;
 
     /**
      * @param gpsHeard the system location runs. It is paused while the adapter follows the car in the background:
@@ -78,6 +80,8 @@ public final class MockLocationShare
         mState = state;
         mStateSinceMs = nowMs;
       }
+      if (state == State.SHARING)
+        mHasShared = true;
       return state;
     }
 
@@ -87,12 +91,11 @@ public final class MockLocationShare
     }
 
     /**
-     * A mock position is ours while the share runs: it is never read back. A pause doesn't change it, late fixes of
-     * the share may still come in it.
+     * Once we have shared, mock fixes are never read back, including cached fixes after OFF or a restart.
      */
     boolean dropsFix(boolean mock)
     {
-      return mock && mState != State.OFF;
+      return mock && mHasShared;
     }
 
     private static boolean isGoodGps(@NonNull NoGps.Status status)
@@ -112,6 +115,8 @@ public final class MockLocationShare
   private boolean mShared;
   private boolean mStarted;
   private boolean mGpsHeard = true;
+  private State mAppliedState = State.OFF;
+  private long mLastStaleLogMs;
   @Nullable
   private Location mLocation;
 
@@ -176,6 +181,7 @@ public final class MockLocationShare
   @UiThread
   void setGpsHeard(boolean heard)
   {
+    Logger.i(TAG, "GPS heard = " + heard);
     mGpsHeard = heard;
   }
 
@@ -190,7 +196,12 @@ public final class MockLocationShare
   @UiThread
   boolean dropsFix(@NonNull Location location)
   {
-    return mSchedule.dropsFix(LocationCompat.isMock(location));
+    // On a cold start the cache can still contain a mock fix from the previous process.
+    final boolean drop = LocationCompat.isMock(location) && (isEnabled() || mSchedule.dropsFix(true));
+    if (drop)
+      Logger.i(TAG, "FIX drop: mock, provider=" + location.getProvider() + " ageMs="
+                        + (SystemClock.elapsedRealtime() - location.getElapsedRealtimeNanos() / 1_000_000));
+    return drop;
   }
 
   private void tick()
@@ -210,10 +221,14 @@ public final class MockLocationShare
 
   private void apply(@NonNull State state)
   {
+    if (state != mAppliedState)
+    {
+      Logger.i(TAG, "Position for other apps: " + mAppliedState + " -> " + state + " gpsHeard=" + mGpsHeard);
+      mAppliedState = state;
+    }
     final boolean share = state == State.SHARING;
     if (share == mShared)
       return;
-    Logger.i(TAG, "Position for other apps: " + state);
     if (share)
       mShared = addProviders();
     else
@@ -268,6 +283,7 @@ public final class MockLocationShare
       catch (SecurityException | IllegalArgumentException e)
       {
         // Not added, or not the mock location app any more: Android has removed the provider then.
+        Logger.d(TAG, "Test provider removal: " + provider, e);
       }
     }
   }
@@ -276,6 +292,13 @@ public final class MockLocationShare
   {
     if (mLocation == null)
       return;
+    final long now = SystemClock.elapsedRealtime();
+    final long ageMs = now - mLocation.getElapsedRealtimeNanos() / 1_000_000;
+    if (ageMs > 5000 && now - mLastStaleLogMs >= 30_000)
+    {
+      Logger.w(TAG, "Sharing an unchanged core position, ageMs=" + ageMs);
+      mLastStaleLogMs = now;
+    }
     try
     {
       for (String provider : providers())

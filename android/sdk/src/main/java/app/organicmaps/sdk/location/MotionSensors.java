@@ -27,8 +27,11 @@ class MotionSensors implements SensorEventListener
   {
     stop();
     final Sensor accel = mSensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
-    if (accel != null)
-      mSensorManager.registerListener(this, accel, SensorManager.SENSOR_DELAY_GAME);
+    final boolean accelRegistered =
+        accel != null && mSensorManager.registerListener(this, accel, SensorManager.SENSOR_DELAY_GAME);
+    Logger.i(TAG, "Subscribe accelerometer=" + accelRegistered + " gyroscope requested=" + gyroscope);
+    if (!accelRegistered)
+      Logger.e(TAG, "Cannot subscribe accelerometer");
     if (!gyroscope)
       return;
     // The core estimates the bias by itself, the calibrated sensor is only a fallback.
@@ -38,11 +41,17 @@ class MotionSensors implements SensorEventListener
     if (gyro == null || accel == null)
       Logger.e(TAG, "No gyroscope or accelerometer");
     else
-      mSensorManager.registerListener(this, gyro, SensorManager.SENSOR_DELAY_GAME);
+    {
+      final boolean registered = mSensorManager.registerListener(this, gyro, SensorManager.SENSOR_DELAY_GAME);
+      Logger.i(TAG, "Subscribe gyroscope=" + registered + " type=" + gyro.getType());
+      if (!registered)
+        Logger.e(TAG, "Cannot subscribe gyroscope");
+    }
   }
 
   void stop()
   {
+    Logger.i(TAG, "Unsubscribe motion sensors");
     mSensorManager.unregisterListener(this);
   }
 

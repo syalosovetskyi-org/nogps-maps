@@ -88,6 +88,7 @@ class Elm327Transport
     }
     catch (IOException | SecurityException e)
     {
+      Logger.w(TAG, "ELM327 transport disconnected", e);
       final String reason = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
       post(connection, () -> NoGps.nativeOnElm327Closed(reason));
     }
@@ -124,7 +125,7 @@ class Elm327Transport
       closeQuietly(socket);
       throw new IOException("Closed");
     }
-    Logger.i(TAG, "Connected to " + address);
+    Logger.i(TAG, "ELM327 transport connected");
     return socket;
   }
 
