@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="traffic_feed_unavailable">Дані про затори недоступні</string>
+    <string name="traffic_feed_outdated">Дані про затори застаріли</string>
+    <string name="traffic_feed_network_error">Не вдалося завантажити дані про затори</string>
+    <string name="traffic_feed_update_maps">Оновіть мапи для відображення заторів</string>
+    <string name="traffic_feed_update_app">Оновіть застосунок для відображення заторів</string>
+</resources>

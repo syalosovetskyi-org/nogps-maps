@@ -1,0 +1,9 @@
+{
+  "name": "Traffic flow",
+  "features": [
+    {"geometry": {"type": "LineString", "coordinates": [[0, 0], [4096, 4096]]},
+     "properties": {"road_type": "Major road", "traffic_level": 0.25, "traffic_road_coverage": "one_side"}},
+    {"geometry": {"type": "MultiLineString", "coordinates": [[[2048, 0], [2048, 100]], [[2048, 200], [2048, 300]]]},
+     "properties": {"road_type": "Local road", "road_closure": true, "traffic_road_coverage": "full"}}
+  ]
+}

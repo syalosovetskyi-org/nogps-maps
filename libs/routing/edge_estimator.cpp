@@ -398,6 +398,10 @@ public:
   {}
 
   // EdgeEstimator overrides:
+  bool IsClosed(Segment const & segment) const override
+  {
+    return m_trafficStash && m_trafficStash->GetSpeedGroup(segment) == SpeedGroup::TempBlock;
+  }
   double CalcSegmentWeight(Segment const & segment, RoadGeometry const & road, Purpose purpose,
                            time_t arrivalTime) const override;
   double GetUTurnPenalty(Purpose /* purpose */) const override
