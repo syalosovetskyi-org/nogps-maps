@@ -245,7 +245,7 @@ public final class NoGps
     void stopMotionSensors();
 
     /**
-     * The ELM327 adapter over Bluetooth SPP: {@link #onElm327Connected} or {@link #onElm327Closed} follows.
+     * The ELM327 adapter over a local TCP proxy or Bluetooth SPP: a connected or closed callback follows.
      */
     @Keep
     void elm327Connect(@NonNull String address);
