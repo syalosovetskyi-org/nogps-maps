@@ -226,6 +226,7 @@ public class MwmApplication extends Application implements Application.ActivityL
 
   private void onForeground()
   {
+    Logger.i("NoGpsLifecycle", "Application foreground");
     Logger.d(TAG);
 
     NoGpsBackgroundService.stop(this);
@@ -234,6 +235,7 @@ public class MwmApplication extends Application implements Application.ActivityL
 
   private void onBackground()
   {
+    Logger.i("NoGpsLifecycle", "Application background");
     Logger.d(TAG);
 
     OsmUploadWork.startActionUploadOsmChanges(this);

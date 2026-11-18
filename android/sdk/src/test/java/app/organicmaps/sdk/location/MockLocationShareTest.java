@@ -128,7 +128,7 @@ public class MockLocationShareTest
   }
 
   @Test
-  public void dropsMockFixes_onlyWhileSharing()
+  public void dropsMockFixes_afterSharingIncludingOffAndRestart()
   {
     final Schedule schedule = new Schedule();
     assertFalse(schedule.dropsFix(true));
@@ -139,9 +139,25 @@ public class MockLocationShareTest
     assertEquals(State.PROBING, schedule.update(MANUAL_NO_GPS, true, kShareProbeIntervalMs));
     assertTrue(schedule.dropsFix(true));
     schedule.update(FOLLOWS_GPS, true, kShareProbeIntervalMs + 1000);
-    assertFalse(schedule.dropsFix(true));
+    assertTrue(schedule.dropsFix(true));
+    assertFalse(schedule.dropsFix(false));
     schedule.update(MANUAL_NO_GPS, true, kShareProbeIntervalMs + 2000);
     schedule.reset();
-    assertFalse(schedule.dropsFix(true));
+    assertTrue(schedule.dropsFix(true));
+  }
+
+  @Test
+  public void backgroundNavigation_keepsProbingAndRejectsOwnFixes()
+  {
+    final Schedule schedule = new Schedule();
+    // NavigationService keeps system location running even with the Activity paused.
+    for (long t = 0; t < 20 * 60_000; t += 1000)
+    {
+      final State state = schedule.update(MANUAL_NO_GPS, true, t);
+      assertEquals(t % 70_000 < 60_000 ? State.SHARING : State.PROBING, state);
+      assertTrue(schedule.dropsFix(true));
+      // Real fixes still reach the core, which decides whether they can move the car.
+      assertFalse(schedule.dropsFix(false));
+    }
   }
 }

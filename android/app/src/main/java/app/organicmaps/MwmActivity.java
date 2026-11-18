@@ -1103,6 +1103,7 @@ public class MwmActivity extends BaseMwmFragmentActivity
   @Override
   protected void onResume()
   {
+    Logger.i("NoGpsLifecycle", "Activity onResume: attach UI compass listener");
     super.onResume();
     ThemeSwitcher.INSTANCE.synchronizeApplicationTheme();
     ThemeSwitcher.INSTANCE.synchronizeMapStyle(this, mMapController.isRenderingActive());
@@ -1148,6 +1149,7 @@ public class MwmActivity extends BaseMwmFragmentActivity
   @Override
   protected void onPause()
   {
+    Logger.i("NoGpsLifecycle", "Activity onPause: detach UI compass listener; motion sensors belong to the core");
     if (mOnmapDownloader != null)
       mOnmapDownloader.onPause();
     MwmApplication.from(this).getSensorHelper().removeListener(this);

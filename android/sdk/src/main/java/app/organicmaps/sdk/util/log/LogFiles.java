@@ -20,8 +20,16 @@ final class LogFiles
 
   // A day of driving, 20 hours and more at about 6.5 MB an hour: the log of a drive is analysed afterwards.
   static final long MAX_TOTAL_SIZE = 150_000_000;
+  static final long MAX_TRIP_SIZE = 20_000_000;
 
   private LogFiles() {}
+
+  @NonNull
+  static String tripFileName(@NonNull Date day, int part)
+  {
+    final String name = "trip-" + new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(day);
+    return part == 0 ? name + ".log" : name + "." + part + ".log";
+  }
 
   @NonNull
   static String sanitizeModel(@NonNull String model)

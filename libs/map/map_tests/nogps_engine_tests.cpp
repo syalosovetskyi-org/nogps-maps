@@ -3289,6 +3289,91 @@ UNIT_TEST(NoGps_Engine_InertialContinuesWhenGpsIsLost)
   TestAlmostEqualAbs(North(env.Last().m_position), 0, 1);
 }
 
+UNIT_TEST(NoGps_Engine_BackgroundProbeNetworkDoesNotMoveCarBack)
+{
+  PieceRoads roads({{-1000, 0, 20'000, 0}}, {});
+  Env env(true /* inertial */, &roads);
+  env.m_map.m_navigating = true;
+  MarkCar(env, 0);
+  // No UI calls or GPS for over 15 minutes. During each PROBING window the system returns the old network place,
+  // both directly and mixed into a coarse fused fix. Only the motion source moves the car.
+  for (int probe = 0; probe < 16; ++probe)
+  {
+    env.Drive(60'000, 36, 0);
+    auto const before = env.Last().m_position;
+    for (auto const provider : {Provider::Network, Provider::Fused})
+    {
+      auto network = GpsAt(env.m_clock, 0, 0, {}, {}, 100);
+      network.m_provider = provider;
+      env.m_engine.OnFix(network);
+      TEST_EQUAL(env.Last().m_position, before, (probe, provider));
+    }
+    env.Drive(10'000, 36, 0);
+    TEST(env.m_engine.IsManualMode(), (probe));
+    TEST_EQUAL(env.Last().m_provider, Provider::Inertial, (probe));
+    TEST(!env.m_delegate.HasEvent(Event::GpsBack), (probe));
+    TEST(!env.m_delegate.HasEvent(Event::RoadLost), (probe));
+  }
+  TEST_GREATER(East(env.Last().m_position), 10'000, (env.m_engine.GetTripLine()));
+}
+
+UNIT_TEST(NoGps_Engine_CoarseFusedUsesNetworkRulesWhileNavigating)
+{
+  Env env(false /* inertial */);
+  env.m_map.m_navigating = true;
+  env.m_engine.OnFix(GpsAt(env.m_clock, 100, 0, 90.0, 10.0));
+  auto const shown = env.m_delegate.m_positions.size();
+  env.m_clock.Advance(1000);
+  auto fused = GpsAt(env.m_clock, 0, 0, {}, {}, 100);
+  fused.m_provider = Provider::Fused;
+  env.m_engine.OnFix(fused);
+  TEST_EQUAL(env.m_delegate.m_positions.size(), shown, ());
+  TEST_EQUAL(env.Last().m_provider, Provider::Gps, ());
+  TEST(!env.m_engine.GetStatus().m_gpsSpoofed, ());
+}
+
+UNIT_TEST(NoGps_Engine_StaleFixCannotChangeSpoofingReferenceOrPosition)
+{
+  for (auto const provider : {Provider::Gps, Provider::Fused, Provider::Network})
+  {
+    Env env(false /* inertial */);
+    env.m_engine.OnFix(GpsAt(env.m_clock, 0, 0, {}, {}, 5));
+    auto const shown = env.m_delegate.m_positions.size();
+    auto const trusted = env.m_storage.GetString(Storage::kLastTrusted);
+    auto stale = GpsAt(env.m_clock, 100'000, 0, {}, {}, 5);
+    stale.m_provider = provider;
+    stale.m_timeMs -= 15 * 60'000;
+    env.m_engine.OnFix(stale);
+    env.m_engine.OnLastKnownNetworkFix(stale);
+    TEST_EQUAL(env.m_engine.GetTripLine().find(" net="), std::string::npos, (provider));
+    TEST_EQUAL(env.m_delegate.m_positions.size(), shown, (provider));
+    TEST_EQUAL(env.m_storage.GetString(Storage::kLastTrusted), trusted, (provider));
+    TEST(!env.m_engine.GetStatus().m_gpsSpoofed, (provider));
+    env.m_clock.Advance(1000);
+    env.m_engine.OnFix(GpsAt(env.m_clock, 10, 0, {}, {}, 5));
+    TEST_EQUAL(env.Last().m_provider, Provider::Gps, (provider));
+    TestAlmostEqualAbs(East(env.Last().m_position), 10, 0.1);
+    TEST(!env.m_engine.GetStatus().m_gpsSpoofed, (provider));
+  }
+}
+
+UNIT_TEST(NoGps_Engine_CachedOrFutureFirstFixIsNotShown)
+{
+  for (auto const provider : {Provider::Gps, Provider::Fused, Provider::Network})
+  {
+    for (auto const offsetMs : {-15 * 60'000, 1000})
+    {
+      Env env(false /* inertial */);
+      auto fix = GpsAt(env.m_clock, 0, 0, {}, {}, 5);
+      fix.m_provider = provider;
+      fix.m_timeMs += offsetMs;
+      env.m_engine.OnFix(fix);
+      TEST(env.m_delegate.m_positions.empty(), (provider, offsetMs));
+      TEST(!env.m_storage.GetString(Storage::kLastTrusted), (provider, offsetMs));
+    }
+  }
+}
+
 // The time of GPS is ahead of the clock of the phone, and a GPS position comes a bit after it is taken.
 int64_t constexpr kGpsClockAheadMs = 3000;
 int64_t constexpr kGpsDelayMs = 100;

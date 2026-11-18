@@ -81,6 +81,8 @@ void Engine::Start()
   m_tripLoggedMs.reset();
   m_tripEverySecondMs.reset();
   m_startTimeMs = m_clock.NowMs();
+  m_lastGyroMs.reset();
+  m_lastAccelMs.reset();
   if (m_spoofingDetector.GetPhantomsCount() == 0)
     m_spoofingDetector.DeserializePhantoms(m_storage.Get<std::string>(Storage::kWrongNetworkPoints, ""));
   RestoreTrustedPosition();
@@ -118,13 +120,29 @@ void Engine::OnCompass(double headingDeg, double accuracyDeg)
 void Engine::OnFix(Fix const & location)
 {
   CHECK_THREAD_CHECKER(m_threadChecker, ());
+  auto const logFix = [&](char const * decision)
+  {
+    LOG(LINFO, ("FIX", DebugPrint(location.m_provider), location.m_position, "acc=", location.m_accuracyM, "ageMs=",
+                AgeMs(location), decision));
+  };
   if (!m_active)
   {
-    LOG(LWARNING, ("Not active, ignoring", DebugPrint(location.m_provider), location.m_position));
+    logFix("drop: inactive");
     return;
   }
 
-  bool const isNetwork = location.m_provider == Provider::Network;
+  bool const isNetwork = SourceOf(location) == PositionSource::Network;
+  // Cached fixes must not change either the shown position or the spoofing detector's trusted reference.
+  if (AgeMs(location) < 0 || AgeMs(location) > (isNetwork ? kNetworkStatusMaxAgeMs : kGpsMaxAgeMs))
+  {
+    logFix("drop: stale or future");
+    return;
+  }
+  if (!IsAccuracySatisfied(location))
+  {
+    logFix("drop: accuracy");
+    return;
+  }
   if (location.m_provider == Provider::Gps)
     m_rawGps = location;
   else if (location.m_provider == Provider::Fused)
@@ -143,7 +161,7 @@ void Engine::OnFix(Fix const & location)
     }
     if (!accepted)
     {
-      LOG(LWARNING, ("The network location jumps away, ignoring it =", location.m_position, location.m_accuracyM));
+      logFix("drop: network jump or phantom");
       return;
     }
     m_networkLocation = location;
@@ -169,13 +187,14 @@ void Engine::OnFix(Fix const & location)
     // The user sees how GPS works though the car does not follow it.
     if (trusted)
       TrackWorkingGps(location);
+    logFix("drop: GPS disabled");
     return;
   }
 
   if (!trusted)
   {
     m_gpsReturnDetector.Reset();
-    LOG(LWARNING, ("Untrusted location =", location.m_position, location.m_accuracyM));
+    logFix("drop: spoofing detector");
     return;
   }
 
@@ -186,7 +205,7 @@ void Engine::OnFix(Fix const & location)
   if (m_lastTrustedGpsTimeMs && location.m_timeMs == *m_lastTrustedGpsTimeMs &&
       SourceOf(location) == PositionSource::Gps)
   {
-    LOG(LDEBUG, ("The same position again", location.m_position));
+    logFix("drop: duplicate GPS");
     return;
   }
 
@@ -207,12 +226,14 @@ void Engine::OnFix(Fix const & location)
       EnterManualModeByItself("GPS has left the roads, location = " + DebugPrint(location.m_position));
     else
       LOG(LWARNING, ("GPS is off the roads, location =", location.m_position));
+    logFix("drop: off road");
     return;
   }
   m_offRoadGpsCount = 0;
   if (!m_manualMode && goodGps && ContradictsInertial(location))
   {
     EnterManualModeByItself("GPS contradicts the inertial position, location = " + DebugPrint(location.m_position));
+    logFix("drop: contradicts inertial");
     return;
   }
   if (!m_manualMode && goodGps)
@@ -231,8 +252,7 @@ void Engine::OnFix(Fix const & location)
 
   if (m_manualMode)
   {
-    if (IsCarMoving())
-      LOG(LDEBUG, ("Manual mode is on, ignoring", location.m_position));
+    logFix("reference only: manual mode");
     return;
   }
 
@@ -240,19 +260,13 @@ void Engine::OnFix(Fix const & location)
   // while navigating they would throw the car off the route, so only GPS and dead reckoning are used.
   if (isNetwork && m_savedLocation && m_map.IsNavigating())
   {
-    LOG(LDEBUG, ("Navigating, ignoring the network location", location.m_position));
+    logFix("reference only: network while navigating");
     return;
   }
 
   if (isNetwork && IsInertialActive())
   {
-    LOG(LDEBUG, ("Inertial navigation is more accurate than", location.m_position));
-    return;
-  }
-
-  if (!IsAccuracySatisfied(location))
-  {
-    LOG(LWARNING, ("Unsatisfied accuracy for", location.m_position));
+    logFix("reference only: inertial active");
     return;
   }
 
@@ -260,7 +274,7 @@ void Engine::OnFix(Fix const & location)
   if (m_savedLocation && !(spoofed && isNetwork) && !m_acceptNextLocation &&
       !IsBetterThanLast(location, *m_savedLocation))
   {
-    LOG(LDEBUG, ("The new", location.m_position, "is worse than the last", m_savedLocation->m_position));
+    logFix("drop: worse than last");
     return;
   }
 
@@ -280,27 +294,45 @@ void Engine::OnFix(Fix const & location)
     RebuildRouteIfOffRoute(location);
   m_lastPositionSource = source;
 
+  logFix("accept: shown");
   NotifyLocationUpdated();
 }
 
 void Engine::OnLastKnownNetworkFix(Fix const & fix)
 {
+  if (AgeMs(fix) < 0 || AgeMs(fix) > GpsSpoofingDetector::kNetworkMaxAgeMs)
+  {
+    LOG(LINFO, ("FIX last known network drop: stale or future, ageMs=", AgeMs(fix)));
+    return;
+  }
   // The first GPS positions are verified too, a fresh network position may come only several seconds later.
   if (m_networkLocation)
+  {
+    LOG(LINFO, ("FIX last known network drop: already have network"));
     return;
+  }
   LOG(LINFO, ("Last known network location =", fix.m_position, fix.m_accuracyM));
   if (m_spoofingDetector.OnNetworkPosition(fix.m_position, fix.m_accuracyM, fix.m_timeMs))
+  {
     m_networkLocation = fix;
+    LOG(LINFO, ("FIX last known network reference only: bootstrap"));
+  }
+  else
+  {
+    LOG(LINFO, ("FIX last known network drop: network jump or phantom"));
+  }
 }
 
 void Engine::OnGyro(int64_t timestampNs, double x, double y, double z)
 {
+  m_lastGyroMs = timestampNs / 1'000'000;
   if (m_inertial)
     m_inertial->OnGyro(timestampNs, {x, y, z});
 }
 
 void Engine::OnAccel(int64_t timestampNs, double x, double y, double z)
 {
+  m_lastAccelMs = timestampNs / 1'000'000;
   if (m_inertial)
     m_inertial->OnAccel(timestampNs, {x, y, z});
 }
@@ -589,6 +621,7 @@ void Engine::SaveTrustedPosition()
   std::snprintf(buf, sizeof(buf), "%.7f,%.7f,%lld", trusted->m_position.m_lat, trusted->m_position.m_lon,
                 static_cast<long long>(unixTimeMs));
   m_storage.Set(Storage::kLastTrusted, std::string(buf));
+  LOG(LINFO, ("Trusted reference saved =", buf));
 }
 
 void Engine::RestoreTrustedPosition()
@@ -717,7 +750,7 @@ void Engine::SetInertialNavigationEnabled(bool enabled)
 
 void Engine::SetElm327Address(std::string const & address)
 {
-  LOG(LINFO, ("address =", address));
+  LOG(LINFO, ("ELM327 configured =", !address.empty()));
   m_storage.Set(Storage::kElm327Address, address);
   if (IsInertialNavigationEnabled() && m_inertial)
     m_inertial->Start();
@@ -1457,6 +1490,8 @@ std::string Engine::GetTripLine()
     line += " markAge=" + FormatSeconds(MsSince(m_manualSetTimeMs));
   if (m_inertial && IsInertialNavigationEnabled())
   {
+    line += " gyroAge=" + (m_lastGyroMs ? FormatSeconds(MsSince(m_lastGyroMs)) : "-");
+    line += " accelAge=" + (m_lastAccelMs ? FormatSeconds(MsSince(m_lastAccelMs)) : "-");
     line += " obd=" + DebugPrint(m_inertial->GetSourceState()) + " speed=" + std::to_string(m_inertial->GetSpeedKmh());
     // How old the speed is, milliseconds: the car is asked for it a few times a second.
     line += " sage=" + std::to_string(m_inertial->GetSpeedAgeMs());
@@ -1538,6 +1573,7 @@ std::string Engine::GetTripLine()
 
 void Engine::Notify(Event event)
 {
+  LOG(LINFO, ("Event", DebugPrint(event)));
   m_delegate.OnEvent(event);
 }
 
