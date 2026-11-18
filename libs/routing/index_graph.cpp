@@ -295,6 +295,8 @@ void IndexGraph::ReconstructJointSegment(astar::VertexData<JointSegment, RouteWe
                                          Parents<JointSegment> const & parents) const
 {
   CHECK_EQUAL(firstChildren.size(), lastPointIds.size(), ());
+  if (IsClosed(parent))
+    return;
 
   auto const & weightTimeToParent = parentVertexData.m_realDistance;
   auto const & parentJoint = parentVertexData.m_vertex;
@@ -336,7 +338,9 @@ void IndexGraph::ReconstructJointSegment(astar::VertexData<JointSegment, RouteWe
       // And using |weightTimeToParent| is not fair in fact, because we should calculate weight
       // until this |rp|. But we assume that segments have small length and inaccuracy will not
       // affect user.
-      if (IsAccessNoForSure(rp, weightTimeToParent, true /* useAccessConditional */))
+      Segment const step(firstChild.GetMwmId(), firstChild.GetFeatureId(), std::min(start, increment(start)),
+                         firstChild.IsForward());
+      if (IsClosed(step) || IsAccessNoForSure(rp, weightTimeToParent, true /* useAccessConditional */))
       {
         noRoadAccess = true;
         break;
@@ -381,6 +385,8 @@ void IndexGraph::GetNeighboringEdge(astar::VertexData<Segment, RouteWeight> cons
                                     bool useAccessConditional) const
 {
   auto const & from = fromVertexData.m_vertex;
+  if (IsClosed(from) || IsClosed(to))
+    return;
   auto const & weightToFrom = fromVertexData.m_realDistance;
 
   if (IsUTurn(from, to) && IsUTurnAndRestricted(from, to, isOutgoing))

@@ -194,6 +194,14 @@ void IndexGraphStarter::GetEdgesList(astar::VertexData<Vertex, Weight> const & v
   CHECK_NOT_EQUAL(m_graph.GetMode(), WorldGraphMode::LeapsOnly, ());
 
   auto const & segment = vertexData.m_vertex;
+  auto const isClosed = [this](Segment candidate)
+  {
+    if (IsRegionsGraphMode() || !ConvertToReal(candidate) || IsGuidesSegment(candidate))
+      return false;
+    return m_graph.GetIndexGraph(candidate.GetMwmId()).IsClosed(candidate);
+  };
+  if (isClosed(segment))
+    return;
   // Weight used only when isOutgoing = false for passing to m_guides and placing to |edges|.
   RouteWeight ingoingSegmentWeight;
   if (!isOutgoing)
@@ -242,6 +250,7 @@ void IndexGraphStarter::GetEdgesList(astar::VertexData<Vertex, Weight> const & v
   }
 
   AddFakeEdges(segment, isOutgoing, edges);
+  edges.erase_if([&](auto const & edge) { return isClosed(edge.GetTarget()); });
   CreditEndingPassThrough(segment, isOutgoing, edges);
 }
 

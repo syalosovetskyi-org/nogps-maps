@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="traffic_feed_unavailable">Traffic data is not available</string>
+    <string name="traffic_feed_outdated">Traffic data is outdated</string>
+    <string name="traffic_feed_network_error">Unable to download traffic data</string>
+    <string name="traffic_feed_update_maps">Update maps to display traffic</string>
+    <string name="traffic_feed_update_app">Update the app to display traffic</string>
+</resources>

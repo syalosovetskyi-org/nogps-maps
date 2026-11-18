@@ -678,7 +678,6 @@ public class MwmActivity extends BaseMwmFragmentActivity
 
     mNavigationController = new NavigationController(
         this, v -> onSettingsOptionSelected(), v -> openVoiceInstructionsSettings(), this::updateBottomWidgetsOffset);
-    // TrafficManager.INSTANCE.attach(mNavigationController);
     initOnmapDownloader();
     initPositionChooser();
   }
@@ -1166,6 +1165,8 @@ public class MwmActivity extends BaseMwmFragmentActivity
     Framework.nativePlacePageActivationListener(this);
     BookmarkManager.INSTANCE.addLoadingListener(this);
     MwmApplication.from(getApplicationContext()).getIsolinesManager().attach(this::onIsolinesStateChanged);
+    if (app.organicmaps.sdk.BuildConfig.TRAFFIC_ENABLED)
+      app.organicmaps.sdk.maplayer.traffic.TrafficManager.INSTANCE.attach(mNavigationController);
     updateDrivingOptionCount();
     RoutingController.get().applyPendingRoutingOptions();
     LocationState.nativeSetListener(this);
@@ -1186,6 +1187,7 @@ public class MwmActivity extends BaseMwmFragmentActivity
     if (mDisplayManager.isDeviceDisplayUsed() && !RoutingController.get().isNavigating())
       LocationState.nativeRemoveListener();
     // Attached unconditionally in onStart()
+    app.organicmaps.sdk.maplayer.traffic.TrafficManager.INSTANCE.detach(mNavigationController);
     RoutingController.get().detach();
     MwmApplication.from(getApplicationContext()).getIsolinesManager().detach();
     Utils.keepScreenOn(false, getWindow());

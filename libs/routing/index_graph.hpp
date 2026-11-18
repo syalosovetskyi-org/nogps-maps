@@ -68,6 +68,8 @@ public:
 
   Joint::Id GetJointId(RoadPoint const & rp) const { return m_roadIndex.GetJointId(rp); }
 
+  bool IsClosed(Segment const & segment) const { return m_estimator->IsClosed(segment); }
+
   bool IsRoad(uint32_t featureId) const { return m_roadIndex.IsRoad(featureId); }
   RoadJointIds const & GetRoad(uint32_t featureId) const { return m_roadIndex.GetRoad(featureId); }
   RoadGeometry const & GetRoadGeometry(uint32_t featureId) const { return m_geometry->GetRoad(featureId); }

@@ -14,6 +14,8 @@ android {
   }
 
   defaultConfig {
+    def trafficUrl = project.findProperty('trafficDataBaseUrl') ?: ''
+    buildConfigField 'boolean', 'TRAFFIC_ENABLED', (!trafficUrl.isEmpty()).toString()
     buildConfigField 'String', 'GIT_HASH', "\"${rootProject.ext.gitHash}\""
     buildConfigField 'String', 'UPSTREAM_VERSION', "\"${rootProject.ext.upstreamVersion}\""
 
@@ -37,6 +39,7 @@ android {
       def drapeBenchmark = project.findProperty('drapeBenchmark') ?: 'OFF'
 
       cmake {
+        arguments "-DTRAFFIC_DATA_BASE_URL=$trafficUrl"
         cppFlags '-fexceptions', '-frtti'
         cFlags '-Wno-extern-c-compat'
         arguments '-DANDROID_TOOLCHAIN=clang', '-DANDROID_STL=c++_static',

@@ -1,0 +1,18 @@
+{
+  "sourceUpdated": "2026-11-17T08:00:00Z",
+  "results": [
+    {
+      "location": {"length": 120, "shape": {"links": [
+        {"points": [{"lat": 50.45, "lng": 30.52}, {"lat": 50.45, "lng": 30.521}]},
+        {"points": [{"lat": 50.46, "lng": 30.53}, {"lat": 50.46, "lng": 30.531}]}
+      ]}},
+      "currentFlow": {"speed": 5, "freeFlow": 20, "jamFactor": 6.5, "confidence": 0.99, "traversability": "open"}
+    },
+    {
+      "location": {"length": 80, "shape": {"links": [
+        {"points": [{"lat": 50.45, "lng": 30.521}, {"lat": 50.45, "lng": 30.52}]}
+      ]}},
+      "currentFlow": {"speed": 0, "freeFlow": 15, "jamFactor": 10, "traversability": "closed"}
+    }
+  ]
+}
