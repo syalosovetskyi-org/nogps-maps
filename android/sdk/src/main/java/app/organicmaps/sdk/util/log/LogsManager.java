@@ -75,6 +75,7 @@ public final class LogsManager
   {
     Log.i(TAG, "Init file logging");
     mApplicationContext = context.getApplicationContext();
+    Logger.initTripLogging(mApplicationContext);
     mPrefs = prefs;
 
     String phoneId = mPrefs.getString(PREF_PHONE_ID, null);

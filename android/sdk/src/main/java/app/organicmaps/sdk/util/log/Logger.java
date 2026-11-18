@@ -1,5 +1,6 @@
 package app.organicmaps.sdk.util.log;
 
+import android.content.Context;
 import android.util.Log;
 import androidx.annotation.Keep;
 import androidx.annotation.NonNull;
@@ -10,6 +11,7 @@ import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.Calendar;
 import java.util.Date;
@@ -18,13 +20,33 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Pattern;
 
 /// Thread-safe
 public final class Logger
 {
   private static final String TAG = Logger.class.getSimpleName();
   private static final String CORE_TAG = "OMcore";
+  private static final Pattern BLUETOOTH_ADDRESS = Pattern.compile("(?i)\\b(?:[0-9a-f]{2}:){5}[0-9a-f]{2}\\b");
   private static final LogFileWriter FILE_WRITER = new LogFileWriter();
+  private static final LogFileWriter TRIP_WRITER = new LogFileWriter(true);
+  @Nullable
+  private static volatile String sTripsFolder;
+
+  // Always available for post-drive diagnosis, independently of general debug logging.
+  static void initTripLogging(@NonNull Context context)
+  {
+    File root = context.getExternalFilesDir(null);
+    if (root == null)
+      root = context.getFilesDir();
+    final File folder = new File(root, "nogps-trips");
+    if (!folder.isDirectory() && !folder.mkdirs())
+    {
+      Log.e(TAG, "Cannot create trip log directory " + folder);
+      return;
+    }
+    sTripsFolder = folder.getAbsolutePath();
+  }
 
   public static void v(String tag)
   {
@@ -129,6 +151,19 @@ public final class Logger
   private static void logImpl(int level, @Nullable String tag, @NonNull String msg, @Nullable Throwable tr,
                               boolean addJavaSourcePoint)
   {
+    final String tripsFolder = sTripsFolder;
+    if (tripsFolder != null && isTripLog(tag, msg))
+    {
+      final String source = addJavaSourcePoint ? getSourcePoint() + ": " : "";
+      // No device id, Bluetooth address, account data or system information in the trip journal.
+      final String data = sanitizeTripLine("(" + Thread.currentThread().getName() + ") " + getLevelChar(level) + "/"
+                                          + (tag == null ? CORE_TAG : tag) + ": " + source + msg
+                                          + (tr == null ? "" : "\n" + Log.getStackTraceString(tr)));
+      if (level >= Log.ERROR)
+        TRIP_WRITER.writeSync(tripsFolder, data);
+      else
+        TRIP_WRITER.writeAsync(tripsFolder, level, data);
+    }
     final String logsFolder = LogsManager.INSTANCE.getEnabledLogsFolder();
 
     if (logsFolder != null || BuildConfig.DEBUG || level >= Log.INFO)
@@ -157,6 +192,22 @@ public final class Logger
           FILE_WRITER.writeAsync(logsFolder, level, data);
       }
     }
+  }
+
+  static String sanitizeTripLine(@NonNull String data)
+  {
+    // Bluetooth stack exceptions can include the adapter address.
+    return BLUETOOTH_ADDRESS.matcher(data).replaceAll("<adapter>");
+  }
+
+  static boolean isTripLog(@Nullable String tag, @NonNull String msg)
+  {
+    // SrcPoint retains the final two path components (nogps/engine.cpp, etc.).
+    return tag == null ? msg.startsWith("nogps/")
+                       : tag.equals("MockLocationShare") || tag.equals("MotionSensors")
+                             || tag.equals("Elm327Transport")
+                             || tag.equals("NoGpsLifecycle") || tag.equals("NoGpsBackgroundService")
+                             || tag.equals("NavigationService") || tag.equals("LocationState");
   }
 
   private static char getLevelChar(int level)
@@ -220,12 +271,13 @@ public final class Logger
     }
   }
 
-  private static class LogFileWriter
+  static final class LogFileWriter
   {
     private static final int MAX_SIZE = 3000000;
     private static final int QUEUE_CAPACITY = 4096;
     private static final int MAX_BATCH_SIZE = 256;
     private static final int FLUSH_TIMEOUT_SECONDS = 2;
+    private final boolean mTrip;
 
     @NonNull
     private final ArrayBlockingQueue<LogEntry> mQueue = new ArrayBlockingQueue<>(QUEUE_CAPACITY);
@@ -248,7 +300,13 @@ public final class Logger
 
     LogFileWriter()
     {
-      final Thread thread = new Thread(this::loop, "LoggerFileWriter");
+      this(false);
+    }
+
+    LogFileWriter(boolean trip)
+    {
+      mTrip = trip;
+      final Thread thread = new Thread(this::loop, trip ? "TripFileWriter" : "LoggerFileWriter");
       thread.setDaemon(true);
       thread.start();
     }
@@ -393,14 +451,15 @@ public final class Logger
     private void writeLineLocked(@NonNull String logsFolder, @NonNull String data)
     {
       final String line = mDateFormat.format(new Date()) + " " + data + "\n";
+      final int size = line.getBytes(StandardCharsets.UTF_8).length;
       try
       {
-        ensureWriterLocked(logsFolder, line.length());
+        ensureWriterLocked(logsFolder, size);
         if (mWriter == null)
           return;
 
         mWriter.write(line);
-        mCurrentSize += line.length();
+        mCurrentSize += size;
       }
       catch (IOException e)
       {
@@ -431,7 +490,8 @@ public final class Logger
 
       final boolean isNewFile = !file.exists() || file.length() == 0;
       if (isNewFile)
-        LogFiles.deleteOldest(new File(logsFolder), LogFiles.MAX_TOTAL_SIZE);
+        LogFiles.deleteOldest(new File(logsFolder),
+                              mTrip ? LogFiles.MAX_TRIP_SIZE - MAX_SIZE : LogFiles.MAX_TOTAL_SIZE);
 
       mWriter = new BufferedWriter(new FileWriter(file, true));
       mFilePath = file.getPath();
@@ -439,9 +499,12 @@ public final class Logger
 
       if (isNewFile)
       {
-        final String systemInformation = LogsManager.INSTANCE.getSystemInformation();
+        // Keep the timestamp/header format understood by the trip viewer, without device information.
+        final String systemInformation = mTrip
+            ? "Datetime: " + new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US).format(new Date()) + "\n"
+            : LogsManager.INSTANCE.getSystemInformation();
         mWriter.write(systemInformation);
-        mCurrentSize += systemInformation.length();
+        mCurrentSize += systemInformation.getBytes(StandardCharsets.UTF_8).length;
       }
     }
 
@@ -505,7 +568,8 @@ public final class Logger
     @NonNull
     private File getLogFile(@NonNull String logsFolder, int part)
     {
-      return new File(logsFolder, LogFiles.fileName(mDay, LogsManager.INSTANCE.getPhoneId(), part));
+      return new File(logsFolder, mTrip ? LogFiles.tripFileName(mDay, part)
+                                       : LogFiles.fileName(mDay, LogsManager.INSTANCE.getPhoneId(), part));
     }
   }
 }

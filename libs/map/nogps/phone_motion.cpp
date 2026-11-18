@@ -19,7 +19,7 @@ PhoneMotion::PhoneMotion(Delegate & delegate, Scheduler & scheduler, Clock const
 
 void PhoneMotion::Start()
 {
-  LOG(LINFO, ("ELM327 =", m_elm327Address));
+  LOG(LINFO, ("ELM327 configured =", m_elm327Address.has_value()));
   if (m_elm327Address)
   {
     Elm327Session::Listener & listener = *this;
@@ -68,6 +68,8 @@ void PhoneMotion::OnGyro(int64_t timestampNs, Vec3 const & gyro)
 {
   double const dt = m_lastGyroTimestampNs == 0 ? 0 : (timestampNs - m_lastGyroTimestampNs) / 1e9;
   m_lastGyroTimestampNs = timestampNs;
+  if (dt > kMaxSensorDtSec)
+    LOG(LWARNING, ("Gyroscope gap, seconds =", dt));
   if (dt <= 0 || dt > kMaxSensorDtSec || !m_accel)
     return;
 
